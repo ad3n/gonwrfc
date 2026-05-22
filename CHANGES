@@ -1,0 +1,27 @@
+CHANGES
+=======
+
+0.0.1 (2016-02-01)
+------------------
+- Initial release
+
+0.1.0 (2020-05-04)
+------------------
+- Darwin support
+- New connection parameters added, type changed to map
+- New connection attributes added, type changed to map
+- Table parameter accepts also array of variables
+- ABAP datatypes conversions fixed:
+    - Bytes: RFCTYPE_BYTE, RFCTYPE_XSTRING
+    - BCD: RFCTYPE_BCD
+- ABAP INT8 type added: RFCTYPE_INT8
+
+0.2.0 (2020-06-09)
+------------------
+- ABAP datatypes support completed, added: RFC_DECF16, RFC_DECF34, RFC_UTCLONG
+- Error handling extended with GoRfc error type
+- RFCTYPE_XSTRING wrap fix, fixed cLen replaced by variable strLen
+- ABAP input parameters check extended, covering:
+  - Passing non-array to TABLE parameter
+  - Datatypes unit tests
+- Raise an error if RFM call requested over closed connection
