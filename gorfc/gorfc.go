@@ -82,28 +82,9 @@ import (
 	"unsafe"
 )
 
-/*
-static uint GoStrlenU(SAP_UTF16 *str) {
-	return strlenU(str);
-}
-
-static uint GoStrlenU16(SAP_UTF16 *str) {
-	return strlenU16(str);
-}
-
-static SAP_UC* GoMemsetU(SAP_UTF16 * s, int c, size_t n) {
-	return (SAP_UC *)memsetU(s, c, n);
-}
-
-static uint GoStrlenU(SAP_UTF16 *str) {
-	return strlenU(str);
-}
-*/
-
-//################################################################################
-//# ERRORS                                                             	 	     #
-//################################################################################
-
+// ################################################################################
+// # ERRORS                                                             	 	     #
+// ################################################################################
 // RfcError is returned by SAP NWRFC SDK
 type RfcError struct {
 	Description string
@@ -114,7 +95,7 @@ func (err RfcError) Error() string {
 	return fmt.Sprintf("NWRFC SDK error: %s | %s", err.Description, err.ErrorInfo)
 }
 
-func rfcError(errorInfo C.RFC_ERROR_INFO, format string, a ...interface{}) *RfcError {
+func rfcError(errorInfo C.RFC_ERROR_INFO, format string, a ...any) *RfcError {
 	return &RfcError{fmt.Sprintf(format, a...), wrapError(&errorInfo)}
 }
 
@@ -128,6 +109,7 @@ func (err GoRfcError) Error() string {
 	if err.GoError != nil {
 		return fmt.Sprintf("GORFC error: %s | %s", err.Description, err.GoError.Error())
 	}
+
 	return fmt.Sprintf("GORFC error: %s", err.Description)
 }
 
@@ -135,35 +117,39 @@ func goRfcError(description string, goerror error) *GoRfcError {
 	return &GoRfcError{description, goerror}
 }
 
-//################################################################################
-//# FILL FUNCTIONS                                                            	 #
-//################################################################################
-//# Fill functions take Go values and return C values
-
+// ################################################################################
+// # FILL FUNCTIONS                                                            	 #
+// ################################################################################
+// # Fill functions take Go values and return C values
 // fillString allocates memory for the return value that has to be freed
 func fillString(gostr string) (sapuc *C.SAP_UC, err error) {
 	var rc C.RFC_RC
 	var errorInfo C.RFC_ERROR_INFO
 	var resultLen C.uint
+
 	sapucSize := C.uint(len(gostr) + 1)
 	sapuc = C.GoMallocU(sapucSize)
 	*sapuc = 0
 	cStr := C.CString(gostr)
 	defer C.free(unsafe.Pointer(cStr))
+
 	rc = C.RfcUTF8ToSAPUC((*C.RFC_BYTE)(cStr), C.uint(len(gostr)), sapuc, &sapucSize, &resultLen, &errorInfo)
 	if rc != C.RFC_OK {
 		err = rfcError(errorInfo, "Could not fill the string \"%v\"", gostr)
 	}
+
 	return
 }
 
-func fillFunctionParameter(funcDesc C.RFC_FUNCTION_DESC_HANDLE, container C.RFC_FUNCTION_HANDLE, goName string, value interface{}) (err error) {
+func fillFunctionParameter(funcDesc C.RFC_FUNCTION_DESC_HANDLE, container C.RFC_FUNCTION_HANDLE, goName string, value any) (err error) {
 	var rc C.RFC_RC
 	var errorInfo C.RFC_ERROR_INFO
 	var paramDesc C.RFC_PARAMETER_DESC
 	var name *C.SAP_UC
+
 	name, err = fillString(goName)
 	defer C.free(unsafe.Pointer(name))
+
 	if err != nil {
 		return
 	}
@@ -176,7 +162,7 @@ func fillFunctionParameter(funcDesc C.RFC_FUNCTION_DESC_HANDLE, container C.RFC_
 	return fillVariable(paramDesc._type, container, (*C.SAP_UC)(&paramDesc.name[0]), value, paramDesc.typeDescHandle)
 }
 
-func fillVariable(cType C.RFCTYPE, container C.RFC_FUNCTION_HANDLE, cName *C.SAP_UC, value interface{}, typeDesc C.RFC_TYPE_DESC_HANDLE) (err error) {
+func fillVariable(cType C.RFCTYPE, container C.RFC_FUNCTION_HANDLE, cName *C.SAP_UC, value any, typeDesc C.RFC_TYPE_DESC_HANDLE) (err error) {
 	var rc C.RFC_RC
 	var errorInfo C.RFC_ERROR_INFO
 	var structure C.RFC_STRUCTURE_HANDLE
@@ -193,15 +179,18 @@ func fillVariable(cType C.RFCTYPE, container C.RFC_FUNCTION_HANDLE, cName *C.SAP
 		if rc != C.RFC_OK {
 			return rfcError(errorInfo, "Could not get structure")
 		}
+
 		err = fillStructure(typeDesc, structure, value)
 	case C.RFCTYPE_TABLE:
 		if reflect.TypeOf(value).String()[:1] != "[" {
 			return goRfcError(fmt.Sprintf("GO %s passed to ABAP TABLE parameter, expected GO array", reflect.TypeOf(value).String()), nil)
 		}
+
 		rc = C.RfcGetTable(container, cName, &table, &errorInfo)
 		if rc != C.RFC_OK {
 			return rfcError(errorInfo, "Could not get table")
 		}
+
 		err = fillTable(typeDesc, table, value)
 	case C.RFCTYPE_BYTE:
 		bValue = (*C.SAP_RAW)(C.CBytes(reflect.ValueOf(value).Bytes()))
@@ -213,31 +202,25 @@ func fillVariable(cType C.RFCTYPE, container C.RFC_FUNCTION_HANDLE, cName *C.SAP
 		rc = C.RfcSetXString(container, cName, bValue, cLen, &errorInfo)
 	case C.RFCTYPE_CHAR:
 		cValue, err = fillString(reflect.ValueOf(value).String())
-		//cLen := C.uint(len(reflect.ValueOf(value).String()))
 		cLen := C.uint(C.GoStrlenU((*C.SAP_UTF16)(cValue)))
 		rc = C.RfcSetChars(container, cName, (*C.RFC_CHAR)(cValue), cLen, &errorInfo)
 	case C.RFCTYPE_STRING:
 		cValue, err = fillString(reflect.ValueOf(value).String())
-		//cLen := C.uint(len(reflect.ValueOf(value).String()))
 		cLen := C.uint(C.GoStrlenU((*C.SAP_UTF16)(cValue)))
 		rc = C.RfcSetString(container, cName, cValue, cLen, &errorInfo)
 	case C.RFCTYPE_NUM:
 		cValue, err = fillString(reflect.ValueOf(value).String())
-		//cLen := C.uint(len(reflect.ValueOf(value).String()))
 		cLen := C.uint(C.GoStrlenU((*C.SAP_UTF16)(cValue)))
 		rc = C.RfcSetNum(container, cName, (*C.RFC_NUM)(cValue), cLen, &errorInfo)
-	//case C.RFCTYPE_BCD, C.RFCTYPE_DECF16, C.RFCTYPE_DECF34:
-	//	cValue, err = fillString(reflect.ValueOf(value).String())
-	//	//cLen := C.uint(len(reflect.ValueOf(value).String()))
-	//	cLen := C.uint(C.GoStrlenU((*C.SAP_UTF16)(cValue)))
-	//	rc = C.RfcSetString(container, cName, cValue, cLen, &errorInfo)
 	case C.RFCTYPE_FLOAT, C.RFCTYPE_BCD, C.RFCTYPE_DECF16, C.RFCTYPE_DECF34:
 		var goVal string
+
 		if reflect.TypeOf(value).Kind() == reflect.Float64 {
 			goVal = fmt.Sprintf("%g", reflect.ValueOf(value).Float())
 		} else {
 			goVal = reflect.ValueOf(value).String()
 		}
+
 		cValue, err = fillString(goVal)
 		cLen := C.uint(C.GoStrlenU((*C.SAP_UTF16)(cValue)))
 		rc = C.RfcSetString(container, cName, cValue, cLen, &errorInfo)
@@ -262,21 +245,26 @@ func fillVariable(cType C.RFCTYPE, container C.RFC_FUNCTION_HANDLE, cName *C.SAP
 		rc = C.RfcSetString(container, cName, cValue, cLen, &errorInfo)
 	default:
 		var goName string
+
 		goName, err = wrapString(cName, true)
+
 		return rfcError(errorInfo, "Unknown RFC type %v when filling %v", cType, goName)
 	}
+
 	if rc != C.RFC_OK {
 		var goName string
+
 		goName, err = wrapString(cName, true)
 		err = rfcError(errorInfo, "Could not fill %v of type %v", goName, cType)
 	}
+
 	return
 }
 
-func fillStructure(typeDesc C.RFC_TYPE_DESC_HANDLE, container C.RFC_STRUCTURE_HANDLE, value interface{}) (err error) {
+func fillStructure(typeDesc C.RFC_TYPE_DESC_HANDLE, container C.RFC_STRUCTURE_HANDLE, value any) (err error) {
 	var errorInfo C.RFC_ERROR_INFO
-	s := reflect.ValueOf(value)
 
+	s := reflect.ValueOf(value)
 	if s.Type().Kind() == reflect.Map {
 		// Table passed as array of maps
 		keys := s.MapKeys()
@@ -302,13 +290,15 @@ func fillStructure(typeDesc C.RFC_TYPE_DESC_HANDLE, container C.RFC_STRUCTURE_HA
 		// Table passed as array of variables
 		err = fillStructureField(typeDesc, container, "", s.Interface())
 	}
+
 	return
 }
 
-func fillStructureField(typeDesc C.RFC_TYPE_DESC_HANDLE, container C.RFC_STRUCTURE_HANDLE, fieldName string, fieldValue interface{}) (err error) {
+func fillStructureField(typeDesc C.RFC_TYPE_DESC_HANDLE, container C.RFC_STRUCTURE_HANDLE, fieldName string, fieldValue any) (err error) {
 	var rc C.RFC_RC
 	var errorInfo C.RFC_ERROR_INFO
 	var fieldDesc C.RFC_FIELD_DESC
+
 	cName, err := fillString(fieldName)
 	defer C.free(unsafe.Pointer(cName))
 
@@ -320,7 +310,7 @@ func fillStructureField(typeDesc C.RFC_TYPE_DESC_HANDLE, container C.RFC_STRUCTU
 	return fillVariable(fieldDesc._type, C.RFC_FUNCTION_HANDLE(container), (*C.SAP_UC)(&fieldDesc.name[0]), fieldValue, fieldDesc.typeDescHandle)
 }
 
-func fillTable(typeDesc C.RFC_TYPE_DESC_HANDLE, container C.RFC_TABLE_HANDLE, lines interface{}) (err error) {
+func fillTable(typeDesc C.RFC_TYPE_DESC_HANDLE, container C.RFC_TABLE_HANDLE, lines any) (err error) {
 	var errorInfo C.RFC_ERROR_INFO
 	var lineHandle C.RFC_STRUCTURE_HANDLE
 	for i := 0; i < reflect.ValueOf(lines).Len(); i++ {
@@ -329,18 +319,18 @@ func fillTable(typeDesc C.RFC_TYPE_DESC_HANDLE, container C.RFC_TABLE_HANDLE, li
 		if lineHandle == nil {
 			return rfcError(errorInfo, "Could not append new row to table")
 		}
+
 		err = fillStructure(typeDesc, lineHandle, line.Interface())
 	}
+
 	return
 }
 
-//################################################################################
-//# WRAPPER FUNCTIONS                                                            #
-//################################################################################
-//# Wrapper functions take C values and return Go values
-
+// ################################################################################
+// # WRAPPER FUNCTIONS                                                            #
+// ################################################################################
+// # Wrapper functions take C values and return Go values
 func wrapString(sapuc *C.SAP_UC, strip bool) (string, error) {
-	//return nWrapString(sapuc, C.uint(C.strlenU((*C.ushort)(sapuc))), strip)
 	return nWrapString(sapuc, C.uint(C.GoStrlenU((*C.SAP_UTF16)(sapuc))), strip)
 }
 
@@ -361,11 +351,12 @@ func nWrapString(sapuc *C.SAP_UC, sapucLength C.uint, strip bool) (string, error
 	if rc != C.RFC_OK {
 		return "", fmt.Errorf("wrapString sapucLength %v utf8size %v", sapucLength, utf8size)
 	}
-	//result := C.GoString((*C.char)(unsafe.Pointer(utf8Str)))
+
 	result := C.GoStringN((*C.char)(unsafe.Pointer(utf8Str)), C.int(resultLength))
 	if strip {
 		result = strings.TrimRight(result, "\x00 ")
 	}
+
 	return result, nil
 }
 
@@ -522,6 +513,7 @@ func wrapTypeDescription(typeDesc C.RFC_TYPE_DESC_HANDLE) (goTypeDesc TypeDescri
 
 		var fieldName string
 		var fieldType string
+
 		fieldName, err = wrapString((*C.SAP_UC)(&fieldDesc.name[0]), false)
 		fieldType, err = wrapString((*C.SAP_UC)(C.RfcGetTypeAsString(fieldDesc._type)), false)
 		if err != nil {
@@ -563,7 +555,7 @@ type ParameterDescription struct {
 	ParameterText string
 	Optional      bool
 	TypeDesc      TypeDescription
-	// ExtendedDescription interface{} //This field can be used by the application programmer (i.e. you) to store arbitrary extra information.
+	// ExtendedDescription any //This field can be used by the application programmer (i.e. you) to store arbitrary extra information.
 }
 
 func (paramDesc ParameterDescription) String() string {
@@ -582,6 +574,7 @@ func (funcDesc FunctionDescription) String() (result string) {
 	for i := 0; i < len(funcDesc.Parameters); i++ {
 		result += fmt.Sprintf("    %v\n", funcDesc.Parameters[i])
 	}
+
 	return
 }
 
@@ -601,6 +594,7 @@ func wrapFunctionDescription(funcDesc C.RFC_FUNCTION_DESC_HANDLE) (goFuncDesc Fu
 	if err != nil {
 		return
 	}
+
 	goFuncDesc = FunctionDescription{Name: goFuncName}
 
 	rc = C.RfcGetParameterCount(funcDesc, &paramCount, &errorInfo)
@@ -624,6 +618,7 @@ func wrapFunctionDescription(funcDesc C.RFC_FUNCTION_DESC_HANDLE) (goFuncDesc Fu
 		var paramDir string
 		var paramDefaultVal string
 		var paramText string
+
 		paramName, err = wrapString((*C.SAP_UC)(&paramDesc.name[0]), false)
 		paramType, err = wrapString((*C.SAP_UC)(C.RfcGetTypeAsString(paramDesc._type)), false)
 		paramDir, err = wrapString((*C.SAP_UC)(C.RfcGetDirectionAsString(paramDesc.direction)), false)
@@ -658,7 +653,7 @@ func wrapFunctionDescription(funcDesc C.RFC_FUNCTION_DESC_HANDLE) (goFuncDesc Fu
 	return
 }
 
-func wrapVariable(cType C.RFCTYPE, container C.RFC_FUNCTION_HANDLE, cName *C.SAP_UC, cLen C.uint, typeDesc C.RFC_TYPE_DESC_HANDLE, strip bool) (result interface{}, err error) {
+func wrapVariable(cType C.RFCTYPE, container C.RFC_FUNCTION_HANDLE, cName *C.SAP_UC, cLen C.uint, typeDesc C.RFC_TYPE_DESC_HANDLE, strip bool) (result any, err error) {
 	var rc C.RFC_RC
 	var errorInfo C.RFC_ERROR_INFO
 	var structure C.RFC_STRUCTURE_HANDLE
@@ -674,7 +669,6 @@ func wrapVariable(cType C.RFCTYPE, container C.RFC_FUNCTION_HANDLE, cName *C.SAP
 	var int8Value C.RFC_INT8
 	var dateValue *C.RFC_CHAR
 	var timeValue *C.RFC_CHAR
-
 	var resultLen, strLen C.uint
 
 	switch cType {
@@ -683,12 +677,14 @@ func wrapVariable(cType C.RFCTYPE, container C.RFC_FUNCTION_HANDLE, cName *C.SAP
 		if rc != C.RFC_OK {
 			return result, rfcError(errorInfo, "Failed getting structure")
 		}
+
 		return wrapStructure(typeDesc, structure, strip)
 	case C.RFCTYPE_TABLE:
 		rc = C.RfcGetTable(container, cName, &table, &errorInfo)
 		if rc != C.RFC_OK {
 			return result, rfcError(errorInfo, "Failed getting table")
 		}
+
 		return wrapTable(typeDesc, table, strip)
 	case C.RFCTYPE_CHAR:
 		charValue = (*C.RFC_CHAR)(C.GoMallocU(cLen))
@@ -698,6 +694,7 @@ func wrapVariable(cType C.RFCTYPE, container C.RFC_FUNCTION_HANDLE, cName *C.SAP
 		if rc != C.RFC_OK {
 			return result, rfcError(errorInfo, "Failed getting chars")
 		}
+
 		return nWrapString((*C.SAP_UC)(charValue), cLen, strip)
 	case C.RFCTYPE_STRING:
 		rc = C.RfcGetStringLength(container, cName, &strLen, &errorInfo)
@@ -712,6 +709,7 @@ func wrapVariable(cType C.RFCTYPE, container C.RFC_FUNCTION_HANDLE, cName *C.SAP
 		if rc != C.RFC_OK {
 			return result, rfcError(errorInfo, "Failed getting string")
 		}
+
 		return wrapString(stringValue, strip)
 	case C.RFCTYPE_NUM:
 		numValue = (*C.RFC_NUM)(C.GoMallocU(cLen))
@@ -721,14 +719,17 @@ func wrapVariable(cType C.RFCTYPE, container C.RFC_FUNCTION_HANDLE, cName *C.SAP
 		if rc != C.RFC_OK {
 			return result, rfcError(errorInfo, "Failed getting num")
 		}
+
 		return nWrapString((*C.SAP_UC)(numValue), cLen, strip)
 	case C.RFCTYPE_BYTE:
 		byteValue = (*C.SAP_RAW)(C.malloc(C.size_t(cLen)))
 		defer C.free(unsafe.Pointer(byteValue))
+
 		rc = C.RfcGetBytes(container, cName, byteValue, cLen, &errorInfo)
 		if rc != C.RFC_OK {
 			return result, rfcError(errorInfo, "Failed getting bytes")
 		}
+
 		return C.GoBytes(unsafe.Pointer(byteValue), C.int(cLen)), err
 	case C.RFCTYPE_XSTRING:
 		rc = C.RfcGetStringLength(container, cName, &strLen, &errorInfo)
@@ -738,10 +739,12 @@ func wrapVariable(cType C.RFCTYPE, container C.RFC_FUNCTION_HANDLE, cName *C.SAP
 
 		byteValue = (*C.SAP_RAW)(C.malloc(C.size_t(strLen)))
 		defer C.free(unsafe.Pointer(byteValue))
+
 		rc = C.RfcGetXString(container, cName, byteValue, strLen, &resultLen, &errorInfo)
 		if rc != C.RFC_OK {
 			return result, rfcError(errorInfo, "Failed getting xstring")
 		}
+
 		return C.GoBytes(unsafe.Pointer(byteValue), C.int(strLen)), err
 	case C.RFCTYPE_BCD:
 		// An upper bound for the length of the _string representation_
@@ -761,10 +764,12 @@ func wrapVariable(cType C.RFCTYPE, container C.RFC_FUNCTION_HANDLE, cName *C.SAP
 			rc = C.RfcGetString(container, cName, stringValue, strLen+1, &resultLen, &errorInfo)
 			if rc != C.RFC_OK {
 				defer C.free(unsafe.Pointer(stringValue))
+
 				return result, rfcError(errorInfo, "Failed getting BCD")
 			}
 		}
 		defer C.free(unsafe.Pointer(stringValue))
+
 		return wrapString(stringValue, strip)
 	case C.RFCTYPE_DECF16, C.RFCTYPE_DECF34:
 		// An upper bound for the length of the _string representation_
@@ -786,40 +791,47 @@ func wrapVariable(cType C.RFCTYPE, container C.RFC_FUNCTION_HANDLE, cName *C.SAP
 			rc = C.RfcGetString(container, cName, stringValue, strLen+1, &resultLen, &errorInfo)
 			if rc != C.RFC_OK {
 				defer C.free(unsafe.Pointer(stringValue))
+
 				return result, rfcError(errorInfo, "Failed getting DECF")
 			}
 		}
 		defer C.free(unsafe.Pointer(stringValue))
+
 		return wrapString(stringValue, strip)
 	case C.RFCTYPE_FLOAT:
 		rc = C.RfcGetFloat(container, cName, &floatValue, &errorInfo)
 		if rc != C.RFC_OK {
 			return result, rfcError(errorInfo, "Failed getting FLOAT")
 		}
+
 		return float64(floatValue), err
 	case C.RFCTYPE_INT:
 		rc = C.RfcGetInt(container, cName, &intValue, &errorInfo)
 		if rc != C.RFC_OK {
 			return result, rfcError(errorInfo, "Failed getting INT")
 		}
+
 		return int32(intValue), err
 	case C.RFCTYPE_INT1:
 		rc = C.RfcGetInt1(container, cName, &int1Value, &errorInfo)
 		if rc != C.RFC_OK {
 			return result, rfcError(errorInfo, "Failed getting INT1")
 		}
+
 		return uint8(int1Value), err
 	case C.RFCTYPE_INT2:
 		rc = C.RfcGetInt2(container, cName, &int2Value, &errorInfo)
 		if rc != C.RFC_OK {
 			return result, rfcError(errorInfo, "Failed getting INT2")
 		}
+
 		return int16(int2Value), err
 	case C.RFCTYPE_INT8:
 		rc = C.RfcGetInt8(container, cName, &int8Value, &errorInfo)
 		if rc != C.RFC_OK {
 			return result, rfcError(errorInfo, "Failed getting INT8")
 		}
+
 		return int64(int8Value), err
 	case C.RFCTYPE_DATE:
 		dateValue = (*C.RFC_CHAR)(C.malloc(8))
@@ -829,14 +841,17 @@ func wrapVariable(cType C.RFCTYPE, container C.RFC_FUNCTION_HANDLE, cName *C.SAP
 		if rc != C.RFC_OK {
 			return result, rfcError(errorInfo, "Failed getting DATE")
 		}
+
 		value, _ := nWrapString((*C.SAP_UC)(dateValue), 8, false)
 		if value == "00000000" || ' ' == value[1] || err != nil {
 			return
 		}
+
 		goDate, err := time.Parse("20060102", value)
 		if err != nil {
 			return nil, goRfcError("Error parsing ABAP RFC_DATE field", err)
 		}
+
 		return goDate, err
 	case C.RFCTYPE_TIME:
 		timeValue = (*C.RFC_CHAR)(C.malloc(6))
@@ -846,11 +861,13 @@ func wrapVariable(cType C.RFCTYPE, container C.RFC_FUNCTION_HANDLE, cName *C.SAP
 		if rc != C.RFC_OK {
 			return result, rfcError(errorInfo, "Failed getting TIME")
 		}
+
 		value, _ := nWrapString((*C.SAP_UC)(timeValue), 6, false)
 		goTime, err := time.Parse("150405", value)
 		if err != nil {
 			return nil, goRfcError("Error parsing ABAP RFC_TIME field", err)
 		}
+
 		return goTime, err
 	case C.RFCTYPE_UTCLONG:
 		resultLen = 0
@@ -860,17 +877,19 @@ func wrapVariable(cType C.RFCTYPE, container C.RFC_FUNCTION_HANDLE, cName *C.SAP
 		defer C.free(unsafe.Pointer(stringValue))
 
 		rc = C.RfcGetString(container, cName, stringValue, strLen+1, &resultLen, &errorInfo)
-
 		if rc != C.RFC_OK {
 			return result, rfcError(errorInfo, "Failed getting UTCLONG")
 		}
+
 		utc, _ := nWrapString(stringValue, strLen, strip)
+
 		return utc[:19] + "." + utc[20:], err
 	}
+
 	return result, rfcError(errorInfo, "Unknown RFC type %d when wrapping variable", cType)
 }
 
-func wrapStructure(typeDesc C.RFC_TYPE_DESC_HANDLE, container C.RFC_STRUCTURE_HANDLE, strip bool) (result map[string]interface{}, err error) {
+func wrapStructure(typeDesc C.RFC_TYPE_DESC_HANDLE, container C.RFC_STRUCTURE_HANDLE, strip bool) (result map[string]any, err error) {
 	var errorInfo C.RFC_ERROR_INFO
 	var i, fieldCount C.uint
 	var fieldDesc C.RFC_FIELD_DESC
@@ -879,26 +898,31 @@ func wrapStructure(typeDesc C.RFC_TYPE_DESC_HANDLE, container C.RFC_STRUCTURE_HA
 	if rc != C.RFC_OK {
 		return result, rfcError(errorInfo, "Failed getting field count")
 	}
-	result = make(map[string]interface{})
+
+	result = make(map[string]any)
 	for i = 0; i < fieldCount; i++ {
 		rc = C.RfcGetFieldDescByIndex(typeDesc, i, &fieldDesc, &errorInfo)
 		if rc != C.RFC_OK {
 			return result, rfcError(errorInfo, "Failed getting field description by index(%v)", i)
 		}
+
 		var fieldName string
+
 		fieldName, err = wrapString((*C.SAP_UC)(&fieldDesc.name[0]), strip)
 		if err != nil {
 			return
 		}
+
 		result[fieldName], err = wrapVariable(fieldDesc._type, C.RFC_FUNCTION_HANDLE(container), (*C.SAP_UC)(&fieldDesc.name[0]), fieldDesc.nucLength, fieldDesc.typeDescHandle, strip)
 		if err != nil {
 			return
 		}
 	}
+
 	return
 }
 
-func wrapTable(typeDesc C.RFC_TYPE_DESC_HANDLE, container C.RFC_TABLE_HANDLE, strip bool) (result []interface{}, err error) {
+func wrapTable(typeDesc C.RFC_TYPE_DESC_HANDLE, container C.RFC_TABLE_HANDLE, strip bool) (result []any, err error) {
 	var errorInfo C.RFC_ERROR_INFO
 	var i, lines C.uint
 
@@ -906,24 +930,29 @@ func wrapTable(typeDesc C.RFC_TYPE_DESC_HANDLE, container C.RFC_TABLE_HANDLE, st
 	if rc != C.RFC_OK {
 		return result, rfcError(errorInfo, "Failed getting row count")
 	}
-	result = make([]interface{}, lines, lines)
+
+	result = make([]any, lines)
 	for i = 0; i < lines; i++ {
 		rc = C.RfcMoveTo(container, i, &errorInfo)
 		if rc != C.RFC_OK {
 			return result, rfcError(errorInfo, "Failed getting moving cursor to index(%v)", i)
 		}
+
 		structHandle := C.RfcGetCurrentRow(container, &errorInfo)
-		var line map[string]interface{}
+
+		var line map[string]any
+
 		line, err = wrapStructure(typeDesc, structHandle, strip)
 		if err != nil {
 			return
 		}
+
 		result[i] = line
 	}
 	return
 }
 
-func wrapResult(funcDesc C.RFC_FUNCTION_DESC_HANDLE, container C.RFC_FUNCTION_HANDLE, filterParameterDirection C.RFC_DIRECTION, strip bool) (result map[string]interface{}, err error) {
+func wrapResult(funcDesc C.RFC_FUNCTION_DESC_HANDLE, container C.RFC_FUNCTION_HANDLE, filterParameterDirection C.RFC_DIRECTION, strip bool) (result map[string]any, err error) {
 	var errorInfo C.RFC_ERROR_INFO
 	var i, paramCount C.uint
 	var paramDesc C.RFC_PARAMETER_DESC
@@ -933,18 +962,21 @@ func wrapResult(funcDesc C.RFC_FUNCTION_DESC_HANDLE, container C.RFC_FUNCTION_HA
 		return result, rfcError(errorInfo, "Failed getting parameter count")
 	}
 
-	result = make(map[string]interface{})
+	result = make(map[string]any)
 	for i = 0; i < paramCount; i++ {
 		rc = C.RfcGetParameterDescByIndex(funcDesc, i, &paramDesc, &errorInfo)
 		if rc != C.RFC_OK {
 			return result, rfcError(errorInfo, "Failed getting parameter decription by index(%v)", i)
 		}
+
 		if paramDesc.direction != filterParameterDirection {
 			var fieldName string
+
 			fieldName, err = wrapString((*C.SAP_UC)(&paramDesc.name[0]), strip)
 			if err != nil {
 				return
 			}
+
 			result[fieldName], err = wrapVariable(paramDesc._type, container, (*C.SAP_UC)(&paramDesc.name[0]), paramDesc.nucLength, paramDesc.typeDescHandle, strip)
 			if err != nil {
 				return
@@ -962,10 +994,13 @@ func wrapResult(funcDesc C.RFC_FUNCTION_DESC_HANDLE, container C.RFC_FUNCTION_HA
 // GetNWRFCLibVersion returnd the major version, minor version and patchlevel of the SAP NetWeaver RFC library used.
 func GetNWRFCLibVersion() (major, minor, patchlevel uint) {
 	var cmaj, cmin, cpatch C.uint
+
 	C.RfcGetVersion(&cmaj, &cmin, &cpatch)
+
 	major = uint(cmaj)
 	minor = uint(cmin)
 	patchlevel = uint(cpatch)
+
 	return
 }
 
@@ -1009,9 +1044,11 @@ func ConnectionFromParams(connectionParams ConnectionParameters) (conn *Connecti
 	conn.alive = false
 
 	runtime.SetFinalizer(conn, connectionFinalizer)
+
 	conn.paramCount = C.uint(len(connectionParams))
 	conn.connectionParams = connectionParams
-	conn.connParams = make([]C.RFC_CONNECTION_PARAMETER, conn.paramCount, conn.paramCount)
+	conn.connParams = make([]C.RFC_CONNECTION_PARAMETER, conn.paramCount)
+
 	i := 0
 	for name, value := range conn.connectionParams {
 		conn.connParams[i].name, err = fillString(name)
@@ -1039,12 +1076,14 @@ func ConnectionFromDest(dest string) (conn *Connection, err error) {
 // right strips strings returned from RFC call (default is true)
 func (conn *Connection) RStrip(rstrip bool) *Connection {
 	conn.rstrip = rstrip
+
 	return conn
 }
 
 // ReturnImportParams sets returnImportParams of the given connection to the passed parameter and returns the connection
 func (conn *Connection) ReturnImportParams(returnImportParams bool) *Connection {
 	conn.returnImportParams = returnImportParams
+
 	return conn
 }
 
@@ -1058,22 +1097,27 @@ func (conn *Connection) Close() (err error) {
 	var errorInfo C.RFC_ERROR_INFO
 	if conn.alive {
 		conn.alive = false
+
 		rc := C.RfcCloseConnection(conn.handle, &errorInfo)
 		if rc != C.RFC_OK {
 			return rfcError(errorInfo, "Connection could not be closed")
 		}
 	}
+
 	return
 }
 
 // Open opens the connection and sets alive to true.
 func (conn *Connection) Open() (err error) {
 	var errorInfo C.RFC_ERROR_INFO
+
 	conn.handle = C.RfcOpenConnection(&conn.connParams[0], conn.paramCount, &errorInfo)
 	if errorInfo.code != C.RFC_OK {
 		return rfcError(errorInfo, "Connection could not be opened")
 	}
+
 	conn.alive = true
+
 	return
 }
 
@@ -1083,7 +1127,9 @@ func (conn *Connection) Reopen() (err error) {
 	if err != nil {
 		return
 	}
+
 	err = conn.Open()
+
 	return
 }
 
@@ -1096,10 +1142,12 @@ func (conn *Connection) Ping() (err error) {
 			return
 		}
 	}
+
 	rc := C.RfcPing(conn.handle, &errorInfo)
 	if rc != C.RFC_OK {
 		return rfcError(errorInfo, "Server could not be pinged")
 	}
+
 	return
 }
 
@@ -1112,6 +1160,7 @@ func (conn *Connection) GetConnectionAttributes() (connAttr ConnectionAttributes
 	if rc != C.RFC_OK || errorInfo.code != C.RFC_OK {
 		return nil, rfcError(errorInfo, "Could not get connection attributes")
 	}
+
 	return wrapConnectionAttributes(attributes, conn.rstrip)
 }
 
@@ -1141,7 +1190,7 @@ func (conn *Connection) GetFunctionDescription(goFuncName string) (goFuncDesc Fu
 }
 
 // Call calls the given function with the given parameters and wraps the results returned.
-func (conn *Connection) Call(goFuncName string, params interface{}) (result map[string]interface{}, err error) {
+func (conn *Connection) Call(goFuncName string, params any) (result map[string]any, err error) {
 	if !conn.alive {
 		return nil, goRfcError("Call() method requires an open connection", nil)
 	}
@@ -1149,6 +1198,7 @@ func (conn *Connection) Call(goFuncName string, params interface{}) (result map[
 	var errorInfo C.RFC_ERROR_INFO
 
 	funcName, err := fillString(goFuncName)
+
 	defer C.free(unsafe.Pointer(funcName))
 	if err != nil {
 		return
@@ -1202,7 +1252,7 @@ func (conn *Connection) Call(goFuncName string, params interface{}) (result map[
 			}
 		}
 	} else {
-		return result, rfcError(errorInfo, "Parameters can only be passed as types map[string]interface{} or go-structures")
+		return result, rfcError(errorInfo, "Parameters can only be passed as types map[string]any or go-structures")
 	}
 
 	rc := C.RfcInvoke(conn.handle, funcCont, &errorInfo)
@@ -1214,5 +1264,6 @@ func (conn *Connection) Call(goFuncName string, params interface{}) (result map[
 	if conn.returnImportParams {
 		return wrapResult(funcDesc, funcCont, (C.RFC_DIRECTION)(0), conn.rstrip)
 	}
+
 	return wrapResult(funcDesc, funcCont, C.RFC_IMPORT, conn.rstrip)
 }
