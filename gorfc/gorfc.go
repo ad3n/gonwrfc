@@ -193,12 +193,14 @@ func fillVariable(cType C.RFCTYPE, container C.RFC_FUNCTION_HANDLE, cName *C.SAP
 
 		err = fillTable(typeDesc, table, value)
 	case C.RFCTYPE_BYTE:
-		bValue = (*C.SAP_RAW)(C.CBytes(reflect.ValueOf(value).Bytes()))
-		cLen := C.uint(len(reflect.ValueOf(value).Bytes()))
+		rv := reflect.ValueOf(value).Bytes()
+		bValue = (*C.SAP_RAW)(C.CBytes(rv))
+		cLen := C.uint(len(rv))
 		rc = C.RfcSetBytes(container, cName, bValue, cLen, &errorInfo)
 	case C.RFCTYPE_XSTRING:
-		bValue = (*C.SAP_RAW)(C.CBytes(reflect.ValueOf(value).Bytes()))
-		cLen := C.uint(len(reflect.ValueOf(value).Bytes()))
+		rv := reflect.ValueOf(value).Bytes()
+		bValue = (*C.SAP_RAW)(C.CBytes(rv))
+		cLen := C.uint(len(rv))
 		rc = C.RfcSetXString(container, cName, bValue, cLen, &errorInfo)
 	case C.RFCTYPE_CHAR:
 		cValue, err = fillString(reflect.ValueOf(value).String())
@@ -215,20 +217,22 @@ func fillVariable(cType C.RFCTYPE, container C.RFC_FUNCTION_HANDLE, cName *C.SAP
 	case C.RFCTYPE_FLOAT, C.RFCTYPE_BCD, C.RFCTYPE_DECF16, C.RFCTYPE_DECF34:
 		var goVal string
 
-		if reflect.TypeOf(value).Kind() == reflect.Float64 {
-			goVal = fmt.Sprintf("%g", reflect.ValueOf(value).Float())
+		rv := reflect.ValueOf(value)
+		if rv.Type().Kind() == reflect.Float64 {
+			goVal = fmt.Sprintf("%g", rv.Float())
 		} else {
-			goVal = reflect.ValueOf(value).String()
+			goVal = rv.String()
 		}
 
 		cValue, err = fillString(goVal)
 		cLen := C.uint(C.GoStrlenU((*C.SAP_UTF16)(cValue)))
 		rc = C.RfcSetString(container, cName, cValue, cLen, &errorInfo)
 	case C.RFCTYPE_INT1:
-		if reflect.TypeOf(value).Kind() == reflect.Int {
-			rc = C.RfcSetInt(container, cName, C.RFC_INT(reflect.ValueOf(value).Int()), &errorInfo)
+		rv := reflect.ValueOf(value)
+		if rv.Type().Kind() == reflect.Int {
+			rc = C.RfcSetInt(container, cName, C.RFC_INT(rv.Int()), &errorInfo)
 		} else {
-			rc = C.RfcSetInt(container, cName, C.RFC_INT(reflect.ValueOf(value).Uint()), &errorInfo)
+			rc = C.RfcSetInt(container, cName, C.RFC_INT(rv.Uint()), &errorInfo)
 		}
 	case C.RFCTYPE_INT2, C.RFCTYPE_INT, C.RFCTYPE_INT8:
 		rc = C.RfcSetInt(container, cName, C.RFC_INT(reflect.ValueOf(value).Int()), &errorInfo)
@@ -240,7 +244,6 @@ func fillVariable(cType C.RFCTYPE, container C.RFC_FUNCTION_HANDLE, cName *C.SAP
 		rc = C.RfcSetTime(container, cName, (*C.RFC_CHAR)(cValue), &errorInfo)
 	case C.RFCTYPE_UTCLONG:
 		cValue, err = fillString(reflect.ValueOf(value).String())
-		//cLen := C.uint(len(reflect.ValueOf(value).String()))
 		cLen := C.uint(C.GoStrlenU((*C.SAP_UTF16)(cValue)))
 		rc = C.RfcSetString(container, cName, cValue, cLen, &errorInfo)
 	default:
@@ -265,29 +268,34 @@ func fillStructure(typeDesc C.RFC_TYPE_DESC_HANDLE, container C.RFC_STRUCTURE_HA
 	var errorInfo C.RFC_ERROR_INFO
 
 	s := reflect.ValueOf(value)
-	if s.Type().Kind() == reflect.Map {
-		// Table passed as array of maps
-		keys := s.MapKeys()
-		if len(keys) > 0 {
-			if keys[0].Kind() == reflect.String {
-				for _, nameValue := range keys {
-					fieldName := nameValue.String()
-					fieldValue := s.MapIndex(nameValue).Interface()
-					err = fillStructureField(typeDesc, container, fieldName, fieldValue)
+	switch s.Type().Kind() {
+	case reflect.Map:
+		iter := s.MapRange()
+		valid := false
+		for iter.Next() {
+			key := iter.Key()
+			if !valid {
+				if key.Kind() != reflect.String {
+					return rfcError(errorInfo, "Could not fill structure passed as map with non-string keys")
 				}
-			} else {
-				return rfcError(errorInfo, "Could not fill structure passed as map with non-string keys")
+
+				valid = true
+			}
+
+			fieldName := key.String()
+			fieldValue := iter.Value().Interface()
+			err = fillStructureField(typeDesc, container, fieldName, fieldValue)
+			if err != nil {
+				return
 			}
 		}
-	} else if s.Type().Kind() == reflect.Struct {
-		// Table passed as array of structures
+	case reflect.Struct:
 		for i := 0; i < s.NumField(); i++ {
 			fieldName := s.Type().Field(i).Name
 			fieldValue := s.Field(i).Interface()
 			err = fillStructureField(typeDesc, container, fieldName, fieldValue)
 		}
-	} else {
-		// Table passed as array of variables
+	default:
 		err = fillStructureField(typeDesc, container, "", s.Interface())
 	}
 
@@ -313,14 +321,15 @@ func fillStructureField(typeDesc C.RFC_TYPE_DESC_HANDLE, container C.RFC_STRUCTU
 func fillTable(typeDesc C.RFC_TYPE_DESC_HANDLE, container C.RFC_TABLE_HANDLE, lines any) (err error) {
 	var errorInfo C.RFC_ERROR_INFO
 	var lineHandle C.RFC_STRUCTURE_HANDLE
-	for i := 0; i < reflect.ValueOf(lines).Len(); i++ {
-		line := reflect.ValueOf(lines).Index(i)
+
+	rv := reflect.ValueOf(lines)
+	for i := 0; i < rv.Len(); i++ {
 		lineHandle = C.RfcAppendNewRow(container, &errorInfo)
 		if lineHandle == nil {
 			return rfcError(errorInfo, "Could not append new row to table")
 		}
 
-		err = fillStructure(typeDesc, lineHandle, line.Interface())
+		err = fillStructure(typeDesc, lineHandle, rv.Index(i).Interface())
 	}
 
 	return
@@ -396,7 +405,7 @@ func (err rfcSDKError) String() string {
 type ConnectionAttributes map[string]string
 
 func wrapConnectionAttributes(attributes C.RFC_ATTRIBUTES, strip bool) (connAttr ConnectionAttributes, err error) {
-	connAttr = make(map[string]string)
+	connAttr = make(map[string]string, 25)
 
 	dest, err := nWrapString(&attributes.dest[0], 64, strip)
 	host, err := nWrapString(&attributes.host[0], 100, strip)
@@ -498,7 +507,12 @@ func wrapTypeDescription(typeDesc C.RFC_TYPE_DESC_HANDLE) (goTypeDesc TypeDescri
 		return goTypeDesc, rfcError(errorInfo, "Failed getting type(%v) length", name)
 	}
 
-	goTypeDesc = TypeDescription{Name: name, NucLength: uint(nucLength), UcLength: uint(ucLength)}
+	goTypeDesc = TypeDescription{
+		Name:      name,
+		NucLength: uint(nucLength),
+		UcLength:  uint(ucLength),
+		Fields:    make([]FieldDescription, 0, int(fieldCount)),
+	}
 
 	rc = C.RfcGetFieldCount(typeDesc, &fieldCount, &errorInfo)
 	if rc != C.RFC_OK {
@@ -595,7 +609,10 @@ func wrapFunctionDescription(funcDesc C.RFC_FUNCTION_DESC_HANDLE) (goFuncDesc Fu
 		return
 	}
 
-	goFuncDesc = FunctionDescription{Name: goFuncName}
+	goFuncDesc = FunctionDescription{
+		Name:       goFuncName,
+		Parameters: make([]ParameterDescription, 0, int(paramCount)),
+	}
 
 	rc = C.RfcGetParameterCount(funcDesc, &paramCount, &errorInfo)
 	if rc != C.RFC_OK {
@@ -899,7 +916,7 @@ func wrapStructure(typeDesc C.RFC_TYPE_DESC_HANDLE, container C.RFC_STRUCTURE_HA
 		return result, rfcError(errorInfo, "Failed getting field count")
 	}
 
-	result = make(map[string]any)
+	result = make(map[string]any, int(fieldCount))
 	for i = 0; i < fieldCount; i++ {
 		rc = C.RfcGetFieldDescByIndex(typeDesc, i, &fieldDesc, &errorInfo)
 		if rc != C.RFC_OK {
@@ -962,7 +979,7 @@ func wrapResult(funcDesc C.RFC_FUNCTION_DESC_HANDLE, container C.RFC_FUNCTION_HA
 		return result, rfcError(errorInfo, "Failed getting parameter count")
 	}
 
-	result = make(map[string]any)
+	result = make(map[string]any, int(paramCount))
 	for i = 0; i < paramCount; i++ {
 		rc = C.RfcGetParameterDescByIndex(funcDesc, i, &paramDesc, &errorInfo)
 		if rc != C.RFC_OK {
@@ -1224,24 +1241,28 @@ func (conn *Connection) Call(goFuncName string, params any) (result map[string]a
 	defer C.RfcDestroyFunction(funcCont, nil)
 
 	paramsValue := reflect.ValueOf(params)
-	if paramsValue.Type().Kind() == reflect.Map {
-		keys := paramsValue.MapKeys()
-		if len(keys) > 0 {
-			if keys[0].Kind() == reflect.String {
-				for _, nameValue := range keys {
-					fieldName := nameValue.String()
-					fieldValue := paramsValue.MapIndex(nameValue).Interface()
+	switch paramsValue.Type().Kind() {
+	case reflect.Map:
+		iter := paramsValue.MapRange()
+		valid := false
+		for iter.Next() {
+			key := iter.Key()
+			if key.Kind() == reflect.String {
+				valid = true
+			}
 
-					err = fillFunctionParameter(funcDesc, funcCont, fieldName, fieldValue)
-					if err != nil {
-						return
-					}
-				}
-			} else {
+			if !valid {
 				return result, rfcError(errorInfo, "Could not fill parameters passed as map with non-string keys")
 			}
+
+			fieldName := key.String()
+			fieldValue := iter.Value().Interface()
+			err = fillFunctionParameter(funcDesc, funcCont, fieldName, fieldValue)
+			if err != nil {
+				return
+			}
 		}
-	} else if paramsValue.Type().Kind() == reflect.Struct {
+	case reflect.Struct:
 		for i := 0; i < paramsValue.NumField(); i++ {
 			fieldName := paramsValue.Type().Field(i).Name
 			fieldValue := paramsValue.Field(i).Interface()
@@ -1251,7 +1272,7 @@ func (conn *Connection) Call(goFuncName string, params any) (result map[string]a
 				return
 			}
 		}
-	} else {
+	default:
 		return result, rfcError(errorInfo, "Parameters can only be passed as types map[string]any or go-structures")
 	}
 
