@@ -344,17 +344,19 @@ func fillStructure(typeDesc C.RFC_TYPE_DESC_HANDLE, container C.RFC_STRUCTURE_HA
 
 			fieldName := key.String()
 			fieldValue := iter.Value().Interface()
-			err = fillStructureField(typeDesc, container, fieldName, fieldValue)
-			if err != nil {
+			if err = fillStructureField(typeDesc, container, fieldName, fieldValue); err != nil {
 				return
 			}
 		}
 	case reflect.Struct:
 		t := s.Type()
-		for i := 0; i < s.NumField(); i++ {
+		numField := s.NumField()
+		for i := range numField {
 			fieldName := t.Field(i).Name
 			fieldValue := s.Field(i).Interface()
-			err = fillStructureField(typeDesc, container, fieldName, fieldValue)
+			if err = fillStructureField(typeDesc, container, fieldName, fieldValue); err != nil {
+				return
+			}
 		}
 	default:
 		err = fillStructureField(typeDesc, container, "", s.Interface())
@@ -384,7 +386,6 @@ func fillTable(typeDesc C.RFC_TYPE_DESC_HANDLE, container C.RFC_TABLE_HANDLE, li
 	var lineHandle C.RFC_STRUCTURE_HANDLE
 
 	switch rows := lines.(type) {
-
 	case []map[string]any:
 		for _, row := range rows {
 			lineHandle = C.RfcAppendNewRow(container, &errorInfo)
@@ -416,6 +417,10 @@ func fillTable(typeDesc C.RFC_TYPE_DESC_HANDLE, container C.RFC_TABLE_HANDLE, li
 	}
 
 	rv := reflect.ValueOf(lines)
+	if rv.Kind() != reflect.Array && rv.Kind() != reflect.Slice {
+		return goRfcError("table parameter must be slice or array", nil)
+	}
+
 	for i := 0; i < rv.Len(); i++ {
 		lineHandle = C.RfcAppendNewRow(container, &errorInfo)
 		if lineHandle == nil {
@@ -538,150 +543,9 @@ type ConnectionAttributes map[string]string
 func wrapConnectionAttributes(attributes C.RFC_ATTRIBUTES, strip bool) (connAttr ConnectionAttributes, err error) {
 	connAttr = make(map[string]string, 25)
 
-	dest, err := nWrapString(&attributes.dest[0], 64, strip)
-	if err != nil {
-		return
+	if err := putAttr(connAttr, "host", &attributes.host[0], 100, strip); err != nil {
+		return nil, err
 	}
-
-	host, err := nWrapString(&attributes.host[0], 100, strip)
-	if err != nil {
-		return
-	}
-
-	partnerHost, err := nWrapString(&attributes.partnerHost[0], 100, strip)
-	if err != nil {
-		return
-	}
-
-	sysNumber, err := nWrapString(&attributes.sysNumber[0], 2, strip)
-	if err != nil {
-		return
-	}
-
-	sysId, err := nWrapString(&attributes.sysId[0], 8, strip)
-	if err != nil {
-		return
-	}
-
-	client, err := nWrapString(&attributes.client[0], 3, strip)
-	if err != nil {
-		return
-	}
-
-	user, err := nWrapString(&attributes.user[0], 12, strip)
-	if err != nil {
-		return
-	}
-
-	language, err := nWrapString(&attributes.language[0], 2, strip)
-	if err != nil {
-		return
-	}
-
-	trace, err := nWrapString(&attributes.trace[0], 1, strip)
-	if err != nil {
-		return
-	}
-
-	isoLanguage, err := nWrapString(&attributes.isoLanguage[0], 2, strip)
-	if err != nil {
-		return
-	}
-
-	codepage, err := nWrapString(&attributes.codepage[0], 4, strip)
-	if err != nil {
-		return
-	}
-
-	partnerCodepage, err := nWrapString(&attributes.partnerCodepage[0], 4, strip)
-	if err != nil {
-		return
-	}
-
-	rfcRole, err := nWrapString(&attributes.rfcRole[0], 1, strip)
-	if err != nil {
-		return
-	}
-
-	_type, err := nWrapString(&attributes._type[0], 1, strip)
-	if err != nil {
-		return
-	}
-
-	partnerType, err := nWrapString(&attributes.partnerType[0], 1, strip)
-	if err != nil {
-		return
-	}
-
-	rel, err := nWrapString(&attributes.rel[0], 4, strip)
-	if err != nil {
-		return
-	}
-
-	partnerRel, err := nWrapString(&attributes.partnerRel[0], 4, strip)
-	if err != nil {
-		return
-	}
-
-	kernelRel, err := nWrapString(&attributes.kernelRel[0], 4, strip)
-	if err != nil {
-		return
-	}
-
-	cpicConvId, err := nWrapString(&attributes.cpicConvId[0], 8, strip)
-	if err != nil {
-		return
-	}
-
-	progName, err := nWrapString(&attributes.progName[0], 128, strip)
-	if err != nil {
-		return
-	}
-
-	partnerBytesPerChar, err := nWrapString(&attributes.partnerBytesPerChar[0], 1, strip)
-	if err != nil {
-		return
-	}
-
-	partnerSystemCodepage, err := nWrapString(&attributes.partnerSystemCodepage[0], 4, strip)
-	if err != nil {
-		return
-	}
-
-	partnerIP, err := nWrapString(&attributes.partnerIP[0], 15, strip)
-	if err != nil {
-		return
-	}
-
-	partnerIPv6, err := nWrapString(&attributes.partnerIPv6[0], 45, strip)
-	if err != nil {
-		return
-	}
-
-	connAttr["dest"] = dest
-	connAttr["host"] = host
-	connAttr["partnerHost"] = partnerHost
-	connAttr["sysNumber"] = sysNumber
-	connAttr["sysId"] = sysId
-	connAttr["client"] = client
-	connAttr["user"] = user
-	connAttr["language"] = language
-	connAttr["trace"] = trace
-	connAttr["isoLanguage"] = isoLanguage
-	connAttr["codepage"] = codepage
-	connAttr["partnerCodepage"] = partnerCodepage
-	connAttr["rfcRole"] = rfcRole
-	connAttr["type"] = _type
-	connAttr["partnerType"] = partnerType
-	connAttr["rel"] = rel
-	connAttr["partnerRel"] = partnerRel
-	connAttr["kernelRel"] = kernelRel
-	connAttr["cpicConvId"] = cpicConvId
-	connAttr["progName"] = progName
-	connAttr["partnerBytesPerChar"] = partnerBytesPerChar
-	connAttr["partnerSystemCodepage"] = partnerSystemCodepage
-	connAttr["partnerIP"] = partnerIP
-	connAttr["partnerIPv6"] = partnerIPv6
 
 	return
 }
@@ -1394,7 +1258,7 @@ func (conn *Connection) Open() (err error) {
 	var errorInfo C.RFC_ERROR_INFO
 
 	conn.handle = C.RfcOpenConnection(&conn.connParams[0], conn.paramCount, &errorInfo)
-	if errorInfo.code != C.RFC_OK {
+	if conn.handle == nil {
 		return rfcError(errorInfo, "Connection could not be opened")
 	}
 
@@ -1566,11 +1430,46 @@ func asString(v any) string {
 	switch s := v.(type) {
 	case string:
 		return s
-
 	case fmt.Stringer:
 		return s.String()
-
+	case int:
+		return strconv.Itoa(s)
+	case int8:
+		return strconv.FormatInt(int64(s), 10)
+	case int16:
+		return strconv.FormatInt(int64(s), 10)
+	case int32:
+		return strconv.FormatInt(int64(s), 10)
+	case int64:
+		return strconv.FormatInt(s, 10)
+	case uint:
+		return strconv.FormatUint(uint64(s), 10)
+	case uint8:
+		return strconv.FormatUint(uint64(s), 10)
+	case uint16:
+		return strconv.FormatUint(uint64(s), 10)
+	case uint32:
+		return strconv.FormatUint(uint64(s), 10)
+	case uint64:
+		return strconv.FormatUint(s, 10)
+	case float32:
+		return strconv.FormatFloat(float64(s), 'g', -1, 32)
+	case float64:
+		return strconv.FormatFloat(s, 'g', -1, 64)
+	case bool:
+		return strconv.FormatBool(s)
 	default:
 		return fmt.Sprint(v)
 	}
+}
+
+func putAttr(m map[string]string, key string, ptr *C.SAP_UC, length C.uint, strip bool) error {
+	v, err := nWrapString(ptr, length, strip)
+	if err != nil {
+		return err
+	}
+
+	m[key] = v
+
+	return nil
 }
