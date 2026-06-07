@@ -93,7 +93,20 @@ type RfcError struct {
 }
 
 func (err RfcError) Error() string {
-	return fmt.Sprintf("NWRFC SDK error: %s | %s", err.Description, err.ErrorInfo)
+	var b strings.Builder
+
+	b.Grow(
+		len(err.Description) +
+			len(err.ErrorInfo.String()) +
+			20,
+	)
+
+	b.WriteString("NWRFC SDK error: ")
+	b.WriteString(err.Description)
+	b.WriteString(" | ")
+	b.WriteString(err.ErrorInfo.String())
+
+	return b.String()
 }
 
 func rfcError(errorInfo C.RFC_ERROR_INFO, format string, a ...any) *RfcError {
@@ -107,11 +120,17 @@ type GoRfcError struct {
 }
 
 func (err GoRfcError) Error() string {
+	var b strings.Builder
+
+	b.WriteString("GORFC error: ")
+	b.WriteString(err.Description)
+
 	if err.GoError != nil {
-		return fmt.Sprintf("GORFC error: %s | %s", err.Description, err.GoError.Error())
+		b.WriteString(" | ")
+		b.WriteString(err.GoError.Error())
 	}
 
-	return fmt.Sprintf("GORFC error: %s", err.Description)
+	return b.String()
 }
 
 func goRfcError(description string, goerror error) *GoRfcError {
@@ -472,7 +491,45 @@ func wrapError(errorInfo *C.RFC_ERROR_INFO) rfcSDKError {
 }
 
 func (err rfcSDKError) String() string {
-	return fmt.Sprintf("rfcSDKError[%v, %v, %v, %v, %v, %v, %v, %v, %v, %v]", err.Message, err.Code, err.Key, err.AbapMsgClass, err.AbapMsgType, err.AbapMsgNumber, err.AbapMsgV1, err.AbapMsgV2, err.AbapMsgV3, err.AbapMsgV4)
+	var b strings.Builder
+
+	b.Grow(
+		len(err.Message) +
+			len(err.Code) +
+			len(err.Key) +
+			len(err.AbapMsgClass) +
+			len(err.AbapMsgType) +
+			len(err.AbapMsgNumber) +
+			len(err.AbapMsgV1) +
+			len(err.AbapMsgV2) +
+			len(err.AbapMsgV3) +
+			len(err.AbapMsgV4) +
+			32,
+	)
+
+	b.WriteString("rfcSDKError[")
+	b.WriteString(err.Message)
+	b.WriteString(", ")
+	b.WriteString(err.Code)
+	b.WriteString(", ")
+	b.WriteString(err.Key)
+	b.WriteString(", ")
+	b.WriteString(err.AbapMsgClass)
+	b.WriteString(", ")
+	b.WriteString(err.AbapMsgType)
+	b.WriteString(", ")
+	b.WriteString(err.AbapMsgNumber)
+	b.WriteString(", ")
+	b.WriteString(err.AbapMsgV1)
+	b.WriteString(", ")
+	b.WriteString(err.AbapMsgV2)
+	b.WriteString(", ")
+	b.WriteString(err.AbapMsgV3)
+	b.WriteString(", ")
+	b.WriteString(err.AbapMsgV4)
+	b.WriteByte(']')
+
+	return b.String()
 }
 
 // ConnectionAttributes returned by getConnectionInfo() method
@@ -741,8 +798,41 @@ type ParameterDescription struct {
 }
 
 func (paramDesc ParameterDescription) String() string {
-	return fmt.Sprintf("paramDesc(name= %v, paramType= %v, dir= %v, nucLen= %v, ucLen= %v, dec= %v, defValue= %v, paramText= %v, optional= %v, typeDesc= %v)",
-		paramDesc.Name, paramDesc.ParameterType, paramDesc.Direction, paramDesc.NucLength, paramDesc.UcLength, paramDesc.Decimals, paramDesc.DefaultValue, paramDesc.ParameterText, paramDesc.Optional, paramDesc.TypeDesc)
+	var b strings.Builder
+
+	b.WriteString("paramDesc(name= ")
+	b.WriteString(paramDesc.Name)
+
+	b.WriteString(", paramType= ")
+	b.WriteString(paramDesc.ParameterType)
+
+	b.WriteString(", dir= ")
+	b.WriteString(paramDesc.Direction)
+
+	b.WriteString(", nucLen= ")
+	b.WriteString(strconv.FormatUint(uint64(paramDesc.NucLength), 10))
+
+	b.WriteString(", ucLen= ")
+	b.WriteString(strconv.FormatUint(uint64(paramDesc.UcLength), 10))
+
+	b.WriteString(", dec= ")
+	b.WriteString(strconv.FormatUint(uint64(paramDesc.Decimals), 10))
+
+	b.WriteString(", defValue= ")
+	b.WriteString(paramDesc.DefaultValue)
+
+	b.WriteString(", paramText= ")
+	b.WriteString(paramDesc.ParameterText)
+
+	b.WriteString(", optional= ")
+	b.WriteString(strconv.FormatBool(paramDesc.Optional))
+
+	b.WriteString(", typeDesc= ")
+	b.WriteString(fmt.Sprint(paramDesc.TypeDesc))
+
+	b.WriteByte(')')
+
+	return b.String()
 }
 
 // FunctionDescription type
@@ -751,13 +841,20 @@ type FunctionDescription struct {
 	Parameters []ParameterDescription
 }
 
-func (funcDesc FunctionDescription) String() (result string) {
-	result = fmt.Sprintf("FunctionDescription:\n Name: %v\n Parameters:\n", funcDesc.Name)
-	for i := 0; i < len(funcDesc.Parameters); i++ {
-		result += fmt.Sprintf("    %v\n", funcDesc.Parameters[i])
+func (funcDesc FunctionDescription) String() string {
+	var b strings.Builder
+
+	b.WriteString("FunctionDescription:\n Name: ")
+	b.WriteString(funcDesc.Name)
+	b.WriteString("\n Parameters:\n")
+
+	for i := range funcDesc.Parameters {
+		b.WriteString("    ")
+		b.WriteString(funcDesc.Parameters[i].String())
+		b.WriteByte('\n')
 	}
 
-	return
+	return b.String()
 }
 
 func wrapFunctionDescription(funcDesc C.RFC_FUNCTION_DESC_HANDLE) (goFuncDesc FunctionDescription, err error) {
