@@ -144,6 +144,13 @@ func goRfcError(description string, goerror error) *GoRfcError {
 // # Fill functions take Go values and return C values
 // fillString allocates memory for the return value that has to be freed
 func fillString(gostr string) (sapuc *C.SAP_UC, err error) {
+	if gostr == "" {
+		sapuc = C.GoMallocU(1)
+		*sapuc = 0
+
+		return
+	}
+
 	var rc C.RFC_RC
 	var errorInfo C.RFC_ERROR_INFO
 	var resultLen C.uint
