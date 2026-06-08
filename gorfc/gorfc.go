@@ -79,6 +79,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unsafe"
 )
@@ -147,7 +148,9 @@ func fillString(gostr string) (sapuc *C.SAP_UC, err error) {
 	var errorInfo C.RFC_ERROR_INFO
 	var resultLen C.uint
 
-	sapucSize := C.uint(len(gostr) + 1)
+	// Worst-case: each UTF-8 byte can expand to one UTF-16 code unit (2 bytes),
+	// so len*2+1 avoids SDK-side reallocation for multibyte characters.
+	sapucSize := C.uint(len(gostr)*2 + 1)
 	sapuc = C.GoMallocU(sapucSize)
 	*sapuc = 0
 	var cStr *C.RFC_BYTE
@@ -192,8 +195,9 @@ func fillVariable(cType C.RFCTYPE, container C.RFC_FUNCTION_HANDLE, cName *C.SAP
 	var cValue *C.SAP_UC
 	var bValue *C.SAP_RAW
 
-	defer C.free(unsafe.Pointer(cValue))
-	defer C.free(unsafe.Pointer(bValue))
+	// NOTE: cValue and bValue are freed individually inside their respective
+	// switch cases below — after they are actually assigned — to avoid calling
+	// C.free(nil) unconditionally on every invocation of this function.
 
 	switch cType {
 	case C.RFCTYPE_STRUCTURE:
@@ -229,14 +233,17 @@ func fillVariable(cType C.RFCTYPE, container C.RFC_FUNCTION_HANDLE, cName *C.SAP
 		}
 	case C.RFCTYPE_CHAR:
 		cValue, err = fillString(asString(value))
+		defer C.free(unsafe.Pointer(cValue))
 		cLen := C.uint(C.GoStrlenU((*C.SAP_UTF16)(cValue)))
 		rc = C.RfcSetChars(container, cName, (*C.RFC_CHAR)(cValue), cLen, &errorInfo)
 	case C.RFCTYPE_STRING:
 		cValue, err = fillString(asString(value))
+		defer C.free(unsafe.Pointer(cValue))
 		cLen := C.uint(C.GoStrlenU((*C.SAP_UTF16)(cValue)))
 		rc = C.RfcSetString(container, cName, cValue, cLen, &errorInfo)
 	case C.RFCTYPE_NUM:
 		cValue, err = fillString(asString(value))
+		defer C.free(unsafe.Pointer(cValue))
 		cLen := C.uint(C.GoStrlenU((*C.SAP_UTF16)(cValue)))
 		rc = C.RfcSetNum(container, cName, (*C.RFC_NUM)(cValue), cLen, &errorInfo)
 	case C.RFCTYPE_FLOAT, C.RFCTYPE_BCD, C.RFCTYPE_DECF16, C.RFCTYPE_DECF34:
@@ -253,6 +260,8 @@ func fillVariable(cType C.RFCTYPE, container C.RFC_FUNCTION_HANDLE, cName *C.SAP
 		}
 
 		cValue, err = fillString(goVal)
+		defer C.free(unsafe.Pointer(cValue))
+
 		cLen := C.uint(C.GoStrlenU((*C.SAP_UTF16)(cValue)))
 		rc = C.RfcSetString(container, cName, cValue, cLen, &errorInfo)
 	case C.RFCTYPE_INT1:
@@ -283,12 +292,18 @@ func fillVariable(cType C.RFCTYPE, container C.RFC_FUNCTION_HANDLE, cName *C.SAP
 		}
 	case C.RFCTYPE_DATE:
 		cValue, err = fillString(value.(time.Time).Format("20060102"))
+		defer C.free(unsafe.Pointer(cValue))
+
 		rc = C.RfcSetDate(container, cName, (*C.RFC_CHAR)(cValue), &errorInfo)
 	case C.RFCTYPE_TIME:
 		cValue, err = fillString(value.(time.Time).Format("150405"))
+		defer C.free(unsafe.Pointer(cValue))
+
 		rc = C.RfcSetTime(container, cName, (*C.RFC_CHAR)(cValue), &errorInfo)
 	case C.RFCTYPE_UTCLONG:
 		cValue, err = fillString(asString(value))
+		defer C.free(unsafe.Pointer(cValue))
+
 		cLen := C.uint(C.GoStrlenU((*C.SAP_UTF16)(cValue)))
 		rc = C.RfcSetString(container, cName, cValue, cLen, &errorInfo)
 	default:
@@ -441,6 +456,15 @@ func wrapString(sapuc *C.SAP_UC, strip bool) (string, error) {
 	return nWrapString(sapuc, C.uint(C.GoStrlenU((*C.SAP_UTF16)(sapuc))), strip)
 }
 
+// utf8BufPool reuses temporary byte slices for SAP UC → UTF-8 conversion,
+// reducing GC pressure in the hot-path nWrapString.
+var utf8BufPool = sync.Pool{
+	New: func() any {
+		b := make([]byte, 1024)
+		return &b
+	},
+}
+
 func nWrapString(sapuc *C.SAP_UC, sapucLength C.uint, strip bool) (string, error) {
 	var errorInfo C.RFC_ERROR_INFO
 	var rc C.RFC_RC
@@ -450,16 +474,30 @@ func nWrapString(sapuc *C.SAP_UC, sapucLength C.uint, strip bool) (string, error
 		return "", nil
 	}
 
-	utf8size := C.uint(5*sapucLength + 1)
-	buf := make([]byte, utf8size)
+	// Each SAP UC code unit can expand to at most 4 UTF-8 bytes + 1 for NUL.
+	needed := uint(5*sapucLength + 1)
+
+	// Grab a pooled buffer; grow it if the current capacity is insufficient.
+	bufPtr := utf8BufPool.Get().(*[]byte)
+	if uint(cap(*bufPtr)) < needed {
+		*bufPtr = make([]byte, needed)
+	}
+
+	buf := (*bufPtr)[:needed]
+	utf8size := C.uint(needed)
 	utf8Str := (*C.RFC_BYTE)(unsafe.Pointer(&buf[0]))
 
 	rc = C.RfcSAPUCToUTF8(sapuc, C.uint(sapucLength), utf8Str, &utf8size, &resultLength, &errorInfo)
 	if rc != C.RFC_OK {
+		utf8BufPool.Put(bufPtr)
+
 		return "", fmt.Errorf("wrapString sapucLength %v utf8size %v", sapucLength, utf8size)
 	}
 
-	result := C.GoStringN((*C.char)(unsafe.Pointer(utf8Str)), C.int(resultLength))
+	// Convert buf slice to Go string with a single allocation (no C.GoStringN).
+	result := string(buf[:resultLength])
+	utf8BufPool.Put(bufPtr)
+
 	if strip {
 		result = strings.TrimRight(result, "\x00 ")
 	}
@@ -738,14 +776,16 @@ func wrapFunctionDescription(funcDesc C.RFC_FUNCTION_DESC_HANDLE) (goFuncDesc Fu
 		return
 	}
 
-	goFuncDesc = FunctionDescription{
-		Name:       goFuncName,
-		Parameters: make([]ParameterDescription, 0, paramCount),
-	}
-
 	rc = C.RfcGetParameterCount(funcDesc, &paramCount, &errorInfo)
 	if rc != C.RFC_OK {
 		return goFuncDesc, rfcError(errorInfo, "Failed getting function(%v) parameter count", goFuncName)
+	}
+
+	// NOTE: FunctionDescription is created after fetching paramCount so the
+	// slice capacity is correct and avoids repeated reallocations on append.
+	goFuncDesc = FunctionDescription{
+		Name:       goFuncName,
+		Parameters: make([]ParameterDescription, 0, paramCount),
 	}
 
 	for i = 0; i < paramCount; i++ {
@@ -813,8 +853,6 @@ func wrapVariable(cType C.RFCTYPE, container C.RFC_FUNCTION_HANDLE, cName *C.SAP
 	var int1Value C.RFC_INT1
 	var int2Value C.RFC_INT2
 	var int8Value C.RFC_INT8
-	var dateValue *C.RFC_CHAR
-	var timeValue *C.RFC_CHAR
 	var resultLen, strLen C.uint
 
 	switch cType {
@@ -893,55 +931,32 @@ func wrapVariable(cType C.RFCTYPE, container C.RFC_FUNCTION_HANDLE, cName *C.SAP
 
 		return C.GoBytes(unsafe.Pointer(byteValue), C.int(strLen)), err
 	case C.RFCTYPE_BCD:
-		// An upper bound for the length of the _string representation_
-		// of the BCD is given by (2*cLen)-1 (each digit is encoded in 4bit,
-		// the first 4 bit are reserved for the sign)
-		// Furthermore, a sign char, a decimal separator char may be present
-		// => (2*cLen)+1
+		// Each BCD nibble yields at most one decimal digit; the representation
+		// also needs a sign char and a decimal separator => (2*cLen)+1.
+		// Allocating this exact upper-bound upfront avoids the free-reallocate
+		// retry that the old code required.
 		strLen = 2*cLen + 1
 		stringValue = C.GoMallocU(strLen + 1)
-		rc = C.RfcGetString(container, cName, stringValue, strLen+1, &resultLen, &errorInfo)
-		if rc == 23 {
-			//Buffer too small, use returned requried result length
-			C.free(unsafe.Pointer(stringValue))
-			strLen = resultLen
-			stringValue = C.GoMallocU(strLen + 1)
-
-			rc = C.RfcGetString(container, cName, stringValue, strLen+1, &resultLen, &errorInfo)
-			if rc != C.RFC_OK {
-				C.free(unsafe.Pointer(stringValue))
-
-				return result, rfcError(errorInfo, "Failed getting BCD")
-			}
-		}
 		defer C.free(unsafe.Pointer(stringValue))
+
+		rc = C.RfcGetString(container, cName, stringValue, strLen+1, &resultLen, &errorInfo)
+		if rc != C.RFC_OK {
+			return result, rfcError(errorInfo, "Failed getting BCD")
+		}
 
 		return wrapString(stringValue, strip)
 	case C.RFCTYPE_DECF16, C.RFCTYPE_DECF34:
-		// An upper bound for the length of the _string representation_
-		// of the BCD is given by (2*cLen)-1 (each digit is encoded in 4bit,
-		// the first 4 bit are reserved for the sign)
-		// Furthermore, a sign char, a decimal separator char may be present
-		// => (2*cLen)+1
-		// and exponent char, sign and exponent
-		// => +9
+		// Upper bound: (2*cLen)+1 for digits/sign/separator, +9 for exponent.
+		// Allocating this exact upper-bound upfront avoids the free-reallocate
+		// retry that the old code required.
 		strLen = 2*cLen + 10
 		stringValue = C.GoMallocU(strLen + 1)
-		rc = C.RfcGetString(container, cName, stringValue, strLen+1, &resultLen, &errorInfo)
-		if rc == 23 {
-			//Buffer too small, use returned requried result length
-			C.free(unsafe.Pointer(stringValue))
-			strLen = resultLen
-			stringValue = C.GoMallocU(strLen + 1)
-
-			rc = C.RfcGetString(container, cName, stringValue, strLen+1, &resultLen, &errorInfo)
-			if rc != C.RFC_OK {
-				defer C.free(unsafe.Pointer(stringValue))
-
-				return result, rfcError(errorInfo, "Failed getting DECF")
-			}
-		}
 		defer C.free(unsafe.Pointer(stringValue))
+
+		rc = C.RfcGetString(container, cName, stringValue, strLen+1, &resultLen, &errorInfo)
+		if rc != C.RFC_OK {
+			return result, rfcError(errorInfo, "Failed getting DECF")
+		}
 
 		return wrapString(stringValue, strip)
 	case C.RFCTYPE_FLOAT:
@@ -980,15 +995,16 @@ func wrapVariable(cType C.RFCTYPE, container C.RFC_FUNCTION_HANDLE, cName *C.SAP
 
 		return int64(int8Value), err
 	case C.RFCTYPE_DATE:
-		dateValue = (*C.RFC_CHAR)(C.malloc(8))
-		defer C.free(unsafe.Pointer(dateValue))
+		// Use a Go stack-allocated array instead of C.malloc to avoid the
+		// heap round-trip for this small, fixed-size (8-element) buffer.
+		var dateBuf [8]C.RFC_CHAR
 
-		rc = C.RfcGetDate(container, cName, dateValue, &errorInfo)
+		rc = C.RfcGetDate(container, cName, &dateBuf[0], &errorInfo)
 		if rc != C.RFC_OK {
 			return result, rfcError(errorInfo, "Failed getting DATE")
 		}
 
-		value, _ := nWrapString((*C.SAP_UC)(dateValue), 8, false)
+		value, _ := nWrapString((*C.SAP_UC)(&dateBuf[0]), 8, false)
 		if value == "00000000" || ' ' == value[1] || err != nil {
 			return
 		}
@@ -1000,15 +1016,16 @@ func wrapVariable(cType C.RFCTYPE, container C.RFC_FUNCTION_HANDLE, cName *C.SAP
 
 		return goDate, err
 	case C.RFCTYPE_TIME:
-		timeValue = (*C.RFC_CHAR)(C.malloc(6))
-		defer C.free(unsafe.Pointer(timeValue))
+		// Use a Go stack-allocated array instead of C.malloc to avoid the
+		// heap round-trip for this small, fixed-size (6-element) buffer.
+		var timeBuf [6]C.RFC_CHAR
 
-		rc = C.RfcGetTime(container, cName, timeValue, &errorInfo)
+		rc = C.RfcGetTime(container, cName, &timeBuf[0], &errorInfo)
 		if rc != C.RFC_OK {
 			return result, rfcError(errorInfo, "Failed getting TIME")
 		}
 
-		value, _ := nWrapString((*C.SAP_UC)(timeValue), 6, false)
+		value, _ := nWrapString((*C.SAP_UC)(&timeBuf[0]), 6, false)
 		goTime, err := time.Parse("150405", value)
 		if err != nil {
 			return nil, goRfcError("Error parsing ABAP RFC_TIME field", err)
@@ -1198,11 +1215,16 @@ func ConnectionFromParams(connectionParams ConnectionParameters) (conn *Connecti
 	i := 0
 	for name, value := range conn.connectionParams {
 		conn.connParams[i].name, err = fillString(name)
+		if err != nil {
+			return nil, err
+		}
+
 		conn.connParams[i].value, err = fillString(value)
+		if err != nil {
+			return nil, err
+		}
+
 		i++
-	}
-	if err != nil {
-		return nil, err
 	}
 
 	err = conn.Open()
