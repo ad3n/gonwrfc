@@ -241,16 +241,19 @@ func fillVariable(cType C.RFCTYPE, container C.RFC_FUNCTION_HANDLE, cName *C.SAP
 	case C.RFCTYPE_CHAR:
 		cValue, err = fillString(asString(value))
 		defer C.free(unsafe.Pointer(cValue))
+
 		cLen := C.uint(C.GoStrlenU((*C.SAP_UTF16)(cValue)))
 		rc = C.RfcSetChars(container, cName, (*C.RFC_CHAR)(cValue), cLen, &errorInfo)
 	case C.RFCTYPE_STRING:
 		cValue, err = fillString(asString(value))
 		defer C.free(unsafe.Pointer(cValue))
+
 		cLen := C.uint(C.GoStrlenU((*C.SAP_UTF16)(cValue)))
 		rc = C.RfcSetString(container, cName, cValue, cLen, &errorInfo)
 	case C.RFCTYPE_NUM:
 		cValue, err = fillString(asString(value))
 		defer C.free(unsafe.Pointer(cValue))
+
 		cLen := C.uint(C.GoStrlenU((*C.SAP_UTF16)(cValue)))
 		rc = C.RfcSetNum(container, cName, (*C.RFC_NUM)(cValue), cLen, &errorInfo)
 	case C.RFCTYPE_FLOAT, C.RFCTYPE_BCD, C.RFCTYPE_DECF16, C.RFCTYPE_DECF34:
@@ -336,12 +339,7 @@ func fillStructure(typeDesc C.RFC_TYPE_DESC_HANDLE, container C.RFC_STRUCTURE_HA
 
 	if m, ok := value.(map[string]any); ok {
 		for fieldName, fieldValue := range m {
-			if err := fillStructureField(
-				typeDesc,
-				container,
-				fieldName,
-				fieldValue,
-			); err != nil {
+			if err := fillStructureField(typeDesc, container, fieldName, fieldValue); err != nil {
 				return err
 			}
 		}
@@ -486,6 +484,8 @@ func nWrapString(sapuc *C.SAP_UC, sapucLength C.uint, strip bool) (string, error
 
 	// Grab a pooled buffer; grow it if the current capacity is insufficient.
 	bufPtr := utf8BufPool.Get().(*[]byte)
+	defer utf8BufPool.Put(bufPtr)
+
 	if uint(cap(*bufPtr)) < needed {
 		*bufPtr = make([]byte, needed)
 	}
@@ -496,15 +496,11 @@ func nWrapString(sapuc *C.SAP_UC, sapucLength C.uint, strip bool) (string, error
 
 	rc = C.RfcSAPUCToUTF8(sapuc, C.uint(sapucLength), utf8Str, &utf8size, &resultLength, &errorInfo)
 	if rc != C.RFC_OK {
-		utf8BufPool.Put(bufPtr)
-
 		return "", fmt.Errorf("wrapString sapucLength %v utf8size %v", sapucLength, utf8size)
 	}
 
 	// Convert buf slice to Go string with a single allocation (no C.GoStringN).
 	result := string(buf[:resultLength])
-	utf8BufPool.Put(bufPtr)
-
 	if strip {
 		result = strings.TrimRight(result, "\x00 ")
 	}
@@ -613,6 +609,18 @@ type TypeDescription struct {
 	NucLength uint
 	UcLength  uint
 	Fields    []FieldDescription
+}
+
+func (t TypeDescription) String() string {
+	var b strings.Builder
+
+	b.WriteString(t.Name)
+	b.WriteString(" NucLength=")
+	b.WriteString(strconv.FormatUint(uint64(t.NucLength), 10))
+	b.WriteString(" UcLength=")
+	b.WriteString(strconv.FormatUint(uint64(t.UcLength), 10))
+
+	return b.String()
 }
 
 func wrapTypeDescription(typeDesc C.RFC_TYPE_DESC_HANDLE) (goTypeDesc TypeDescription, err error) {
@@ -737,7 +745,7 @@ func (paramDesc ParameterDescription) String() string {
 	b.WriteString(strconv.FormatBool(paramDesc.Optional))
 
 	b.WriteString(", typeDesc= ")
-	b.WriteString(fmt.Sprint(paramDesc.TypeDesc))
+	b.WriteString(paramDesc.TypeDesc.String())
 
 	b.WriteByte(')')
 
