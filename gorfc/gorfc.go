@@ -1214,21 +1214,24 @@ func connectionFinalizer(conn *Connection) {
 // ConnectionFromParams creates a new connection with the given connection parameters and tries to open it.
 // Returns the connection if successfull, otherwise nil.
 func ConnectionFromParams(connectionParams ConnectionParameters) (conn *Connection, err error) {
-	conn = new(Connection)
+	conn = &Connection{
+		handle:             nil,
+		rstrip:             true,
+		returnImportParams: false,
+		alive:              false,
+		paramCount:         C.uint(len(connectionParams)),
+		connectionParams:   connectionParams,
+		connParams:         make([]C.RFC_CONNECTION_PARAMETER, len(connectionParams)),
+	}
 
-	conn.handle = nil
-	conn.rstrip = true
-	conn.returnImportParams = false
-	conn.alive = false
-
-	runtime.SetFinalizer(conn, connectionFinalizer)
-
-	conn.paramCount = C.uint(len(connectionParams))
-	conn.connectionParams = connectionParams
-	conn.connParams = make([]C.RFC_CONNECTION_PARAMETER, conn.paramCount)
+	defer func() {
+		if err != nil {
+			conn.freeParams()
+		}
+	}()
 
 	i := 0
-	for name, value := range conn.connectionParams {
+	for name, value := range connectionParams {
 		conn.connParams[i].name, err = fillString(name)
 		if err != nil {
 			return nil, err
@@ -1242,12 +1245,14 @@ func ConnectionFromParams(connectionParams ConnectionParameters) (conn *Connecti
 		i++
 	}
 
-	err = conn.Open()
-	if err != nil {
+	if err = conn.Open(); err != nil {
 		return nil, err
 	}
 
-	return
+	// finalizer hanya sebagai safety net
+	runtime.SetFinalizer(conn, connectionFinalizer)
+
+	return conn, nil
 }
 
 // ConnectionFromDest creates a new connection with just the dest system id.
@@ -1276,8 +1281,9 @@ func (conn *Connection) Alive() bool {
 }
 
 // Close closes the connection and sets alive to false.
-func (conn *Connection) Close() (err error) {
+func (conn *Connection) Close() error {
 	var errorInfo C.RFC_ERROR_INFO
+
 	if conn.alive {
 		conn.alive = false
 
@@ -1287,7 +1293,11 @@ func (conn *Connection) Close() (err error) {
 		}
 	}
 
-	return
+	conn.freeParams()
+
+	runtime.SetFinalizer(conn, nil)
+
+	return nil
 }
 
 // Open opens the connection and sets alive to true.
@@ -1461,6 +1471,20 @@ func (conn *Connection) Call(goFuncName string, params any) (result map[string]a
 	}
 
 	return wrapResult(funcDesc, funcCont, C.RFC_IMPORT, conn.rstrip)
+}
+
+func (conn *Connection) freeParams() {
+	for i := range conn.connParams {
+		if conn.connParams[i].name != nil {
+			C.free(unsafe.Pointer(conn.connParams[i].name))
+			conn.connParams[i].name = nil
+		}
+
+		if conn.connParams[i].value != nil {
+			C.free(unsafe.Pointer(conn.connParams[i].value))
+			conn.connParams[i].value = nil
+		}
+	}
 }
 
 func asString(v any) string {
