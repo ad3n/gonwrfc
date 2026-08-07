@@ -84,10 +84,6 @@ import (
 	"unsafe"
 )
 
-// ################################################################################
-// # ERRORS                                                             	 	     #
-// ################################################################################
-// RfcError is returned by SAP NWRFC SDK
 type RfcError struct {
 	Description string
 	ErrorInfo   rfcSDKError
@@ -114,7 +110,6 @@ func rfcError(errorInfo C.RFC_ERROR_INFO, format string, a ...any) *RfcError {
 	return &RfcError{fmt.Sprintf(format, a...), wrapError(&errorInfo)}
 }
 
-// GoRfcError is returned by gorfc
 type GoRfcError struct {
 	Description string
 	GoError     error
@@ -138,11 +133,6 @@ func goRfcError(description string, goerror error) *GoRfcError {
 	return &GoRfcError{description, goerror}
 }
 
-// ################################################################################
-// # FILL FUNCTIONS                                                            	 #
-// ################################################################################
-// # Fill functions take Go values and return C values
-// fillString allocates memory for the return value that has to be freed
 func fillString(gostr string) (sapuc *C.SAP_UC, err error) {
 	if gostr == "" {
 		sapuc = C.GoMallocU(1)
@@ -155,8 +145,6 @@ func fillString(gostr string) (sapuc *C.SAP_UC, err error) {
 	var errorInfo C.RFC_ERROR_INFO
 	var resultLen C.uint
 
-	// Worst-case: each UTF-8 byte can expand to one UTF-16 code unit (2 bytes),
-	// so len*2+1 avoids SDK-side reallocation for multibyte characters.
 	sapucSize := C.uint(len(gostr)*2 + 1)
 	sapuc = C.GoMallocU(sapucSize)
 	*sapuc = 0
@@ -201,10 +189,6 @@ func fillVariable(cType C.RFCTYPE, container C.RFC_FUNCTION_HANDLE, cName *C.SAP
 	var table C.RFC_TABLE_HANDLE
 	var cValue *C.SAP_UC
 	var bValue *C.SAP_RAW
-
-	// NOTE: cValue and bValue are freed individually inside their respective
-	// switch cases below — after they are actually assigned — to avoid calling
-	// C.free(nil) unconditionally on every invocation of this function.
 
 	switch cType {
 	case C.RFCTYPE_STRUCTURE:
@@ -453,16 +437,10 @@ func fillTable(typeDesc C.RFC_TYPE_DESC_HANDLE, container C.RFC_TABLE_HANDLE, li
 	return
 }
 
-// ################################################################################
-// # WRAPPER FUNCTIONS                                                            #
-// ################################################################################
-// # Wrapper functions take C values and return Go values
 func wrapString(sapuc *C.SAP_UC, strip bool) (string, error) {
 	return nWrapString(sapuc, C.uint(C.GoStrlenU((*C.SAP_UTF16)(sapuc))), strip)
 }
 
-// utf8BufPool reuses temporary byte slices for SAP UC → UTF-8 conversion,
-// reducing GC pressure in the hot-path nWrapString.
 var utf8BufPool = sync.Pool{
 	New: func() any {
 		b := make([]byte, 1024)
@@ -479,10 +457,8 @@ func nWrapString(sapuc *C.SAP_UC, sapucLength C.uint, strip bool) (string, error
 		return "", nil
 	}
 
-	// Each SAP UC code unit can expand to at most 4 UTF-8 bytes + 1 for NUL.
 	needed := uint(5*sapucLength + 1)
 
-	// Grab a pooled buffer; grow it if the current capacity is insufficient.
 	bufPtr := utf8BufPool.Get().(*[]byte)
 	defer utf8BufPool.Put(bufPtr)
 
@@ -499,7 +475,6 @@ func nWrapString(sapuc *C.SAP_UC, sapucLength C.uint, strip bool) (string, error
 		return "", fmt.Errorf("wrapString sapucLength %v utf8size %v", sapucLength, utf8size)
 	}
 
-	// Convert buf slice to Go string with a single allocation (no C.GoStringN).
 	result := string(buf[:resultLength])
 	if strip {
 		result = strings.TrimRight(result, "\x00 ")
@@ -578,7 +553,6 @@ func (err rfcSDKError) String() string {
 	return b.String()
 }
 
-// ConnectionAttributes returned by getConnectionInfo() method
 type ConnectionAttributes map[string]string
 
 func wrapConnectionAttributes(attributes C.RFC_ATTRIBUTES, strip bool) (connAttr ConnectionAttributes, err error) {
@@ -591,7 +565,6 @@ func wrapConnectionAttributes(attributes C.RFC_ATTRIBUTES, strip bool) (connAttr
 	return
 }
 
-// FieldDescription type
 type FieldDescription struct {
 	Name      string
 	FieldType string
@@ -603,7 +576,6 @@ type FieldDescription struct {
 	TypeDesc  TypeDescription
 }
 
-// TypeDescription type
 type TypeDescription struct {
 	Name      string
 	NucLength uint
@@ -699,7 +671,6 @@ func wrapTypeDescription(typeDesc C.RFC_TYPE_DESC_HANDLE) (goTypeDesc TypeDescri
 	return
 }
 
-// ParameterDescription type
 type ParameterDescription struct {
 	Name          string
 	ParameterType string
@@ -711,7 +682,6 @@ type ParameterDescription struct {
 	ParameterText string
 	Optional      bool
 	TypeDesc      TypeDescription
-	// ExtendedDescription any //This field can be used by the application programmer (i.e. you) to store arbitrary extra information.
 }
 
 func (paramDesc ParameterDescription) String() string {
@@ -796,8 +766,6 @@ func wrapFunctionDescription(funcDesc C.RFC_FUNCTION_DESC_HANDLE) (goFuncDesc Fu
 		return goFuncDesc, rfcError(errorInfo, "Failed getting function(%v) parameter count", goFuncName)
 	}
 
-	// NOTE: FunctionDescription is created after fetching paramCount so the
-	// slice capacity is correct and avoids repeated reallocations on append.
 	goFuncDesc = FunctionDescription{
 		Name:       goFuncName,
 		Parameters: make([]ParameterDescription, 0, paramCount),
@@ -946,10 +914,6 @@ func wrapVariable(cType C.RFCTYPE, container C.RFC_FUNCTION_HANDLE, cName *C.SAP
 
 		return C.GoBytes(unsafe.Pointer(byteValue), C.int(strLen)), err
 	case C.RFCTYPE_BCD:
-		// Each BCD nibble yields at most one decimal digit; the representation
-		// also needs a sign char and a decimal separator => (2*cLen)+1.
-		// Allocating this exact upper-bound upfront avoids the free-reallocate
-		// retry that the old code required.
 		strLen = 2*cLen + 1
 		stringValue = C.GoMallocU(strLen + 1)
 		defer C.free(unsafe.Pointer(stringValue))
@@ -961,9 +925,6 @@ func wrapVariable(cType C.RFCTYPE, container C.RFC_FUNCTION_HANDLE, cName *C.SAP
 
 		return wrapString(stringValue, strip)
 	case C.RFCTYPE_DECF16, C.RFCTYPE_DECF34:
-		// Upper bound: (2*cLen)+1 for digits/sign/separator, +9 for exponent.
-		// Allocating this exact upper-bound upfront avoids the free-reallocate
-		// retry that the old code required.
 		strLen = 2*cLen + 10
 		stringValue = C.GoMallocU(strLen + 1)
 		defer C.free(unsafe.Pointer(stringValue))
@@ -1010,8 +971,6 @@ func wrapVariable(cType C.RFCTYPE, container C.RFC_FUNCTION_HANDLE, cName *C.SAP
 
 		return int64(int8Value), err
 	case C.RFCTYPE_DATE:
-		// Use a Go stack-allocated array instead of C.malloc to avoid the
-		// heap round-trip for this small, fixed-size (8-element) buffer.
 		var dateBuf [8]C.RFC_CHAR
 
 		rc = C.RfcGetDate(container, cName, &dateBuf[0], &errorInfo)
@@ -1031,8 +990,6 @@ func wrapVariable(cType C.RFCTYPE, container C.RFC_FUNCTION_HANDLE, cName *C.SAP
 
 		return goDate, err
 	case C.RFCTYPE_TIME:
-		// Use a Go stack-allocated array instead of C.malloc to avoid the
-		// heap round-trip for this small, fixed-size (6-element) buffer.
 		var timeBuf [6]C.RFC_CHAR
 
 		rc = C.RfcGetTime(container, cName, &timeBuf[0], &errorInfo)
@@ -1165,11 +1122,6 @@ func wrapResult(funcDesc C.RFC_FUNCTION_DESC_HANDLE, container C.RFC_FUNCTION_HA
 	return
 }
 
-//################################################################################
-//# NW RFC LIB FUNCTIONALITY                                                     #
-//################################################################################
-
-// GetNWRFCLibVersion returnd the major version, minor version and patchlevel of the SAP NetWeaver RFC library used.
 func GetNWRFCLibVersion() (major, minor, patchlevel uint) {
 	var cmaj, cmin, cpatch C.uint
 
@@ -1182,14 +1134,8 @@ func GetNWRFCLibVersion() (major, minor, patchlevel uint) {
 	return
 }
 
-//################################################################################
-//# CONNECTION                                                                   #
-//################################################################################
-
-// Connection Parameters
 type ConnectionParameters map[string]string
 
-// Client Connection
 type Connection struct {
 	handle             C.RFC_CONNECTION_HANDLE
 	rstrip             bool
@@ -1198,10 +1144,6 @@ type Connection struct {
 	paramCount         C.uint
 	connParams         []C.RFC_CONNECTION_PARAMETER
 	connectionParams   ConnectionParameters
-	// tHandle C.RFC_TRANSACTION_HANDLE
-	// active_transaction bool
-	// uHandle C.RFC_UNIT_HANDLE
-	// active_unit bool
 }
 
 func connectionFinalizer(conn *Connection) {
@@ -1211,8 +1153,6 @@ func connectionFinalizer(conn *Connection) {
 	}
 }
 
-// ConnectionFromParams creates a new connection with the given connection parameters and tries to open it.
-// Returns the connection if successfull, otherwise nil.
 func ConnectionFromParams(connectionParams ConnectionParameters) (conn *Connection, err error) {
 	conn = &Connection{
 		handle:             nil,
@@ -1223,12 +1163,6 @@ func ConnectionFromParams(connectionParams ConnectionParameters) (conn *Connecti
 		connectionParams:   connectionParams,
 		connParams:         make([]C.RFC_CONNECTION_PARAMETER, len(connectionParams)),
 	}
-
-	defer func() {
-		if err != nil {
-			conn.freeParams()
-		}
-	}()
 
 	i := 0
 	for name, value := range connectionParams {
@@ -1249,38 +1183,31 @@ func ConnectionFromParams(connectionParams ConnectionParameters) (conn *Connecti
 		return nil, err
 	}
 
-	// finalizer hanya sebagai safety net
 	runtime.SetFinalizer(conn, connectionFinalizer)
 
 	return conn, nil
 }
 
-// ConnectionFromDest creates a new connection with just the dest system id.
 func ConnectionFromDest(dest string) (conn *Connection, err error) {
 	return ConnectionFromParams(ConnectionParameters{"dest": dest})
 }
 
-// RStrip sets rstrip of the given connection to the passed parameter and returns the connection
-// right strips strings returned from RFC call (default is true)
 func (conn *Connection) RStrip(rstrip bool) *Connection {
 	conn.rstrip = rstrip
 
 	return conn
 }
 
-// ReturnImportParams sets returnImportParams of the given connection to the passed parameter and returns the connection
 func (conn *Connection) ReturnImportParams(returnImportParams bool) *Connection {
 	conn.returnImportParams = returnImportParams
 
 	return conn
 }
 
-// Alive returns true if the connection is open else returns false.
 func (conn *Connection) Alive() bool {
 	return conn.alive
 }
 
-// Close closes the connection and sets alive to false.
 func (conn *Connection) Close() error {
 	var errorInfo C.RFC_ERROR_INFO
 
@@ -1300,7 +1227,6 @@ func (conn *Connection) Close() error {
 	return nil
 }
 
-// Open opens the connection and sets alive to true.
 func (conn *Connection) Open() (err error) {
 	var errorInfo C.RFC_ERROR_INFO
 
@@ -1314,7 +1240,6 @@ func (conn *Connection) Open() (err error) {
 	return
 }
 
-// Reopen closes and opens the connection.
 func (conn *Connection) Reopen() (err error) {
 	err = conn.Close()
 	if err != nil {
@@ -1326,7 +1251,6 @@ func (conn *Connection) Reopen() (err error) {
 	return
 }
 
-// Ping pings the server which the client is connected to and does nothing with the error if one occurs.
 func (conn *Connection) Ping() (err error) {
 	var errorInfo C.RFC_ERROR_INFO
 	if !conn.alive {
@@ -1344,7 +1268,6 @@ func (conn *Connection) Ping() (err error) {
 	return
 }
 
-// GetConnectionAttributes returns the wrapped connection attributes of the connection.
 func (conn *Connection) GetConnectionAttributes() (connAttr ConnectionAttributes, err error) {
 	var errorInfo C.RFC_ERROR_INFO
 	var attributes C.RFC_ATTRIBUTES
@@ -1357,7 +1280,6 @@ func (conn *Connection) GetConnectionAttributes() (connAttr ConnectionAttributes
 	return wrapConnectionAttributes(attributes, conn.rstrip)
 }
 
-// GetFunctionDescription returns the wrapped function description of the given function.
 func (conn *Connection) GetFunctionDescription(goFuncName string) (goFuncDesc FunctionDescription, err error) {
 	var errorInfo C.RFC_ERROR_INFO
 
@@ -1382,7 +1304,6 @@ func (conn *Connection) GetFunctionDescription(goFuncName string) (goFuncDesc Fu
 	return wrapFunctionDescription(funcDesc)
 }
 
-// Call calls the given function with the given parameters and wraps the results returned.
 func (conn *Connection) Call(goFuncName string, params any) (result map[string]any, err error) {
 	if !conn.alive {
 		return nil, goRfcError("Call() method requires an open connection", nil)
