@@ -432,6 +432,9 @@ func fillTable(typeDesc C.RFC_TYPE_DESC_HANDLE, container C.RFC_TABLE_HANDLE, li
 		}
 
 		err = fillStructure(typeDesc, lineHandle, rv.Index(i).Interface())
+		if err != nil {
+			return err
+		}
 	}
 
 	return
@@ -448,6 +451,8 @@ var utf8BufPool = sync.Pool{
 	},
 }
 
+const maxPooledUTF8Buffer = 256 << 10
+
 func nWrapString(sapuc *C.SAP_UC, sapucLength C.uint, strip bool) (string, error) {
 	var errorInfo C.RFC_ERROR_INFO
 	var rc C.RFC_RC
@@ -460,7 +465,11 @@ func nWrapString(sapuc *C.SAP_UC, sapucLength C.uint, strip bool) (string, error
 	needed := uint(5*sapucLength + 1)
 
 	bufPtr := utf8BufPool.Get().(*[]byte)
-	defer utf8BufPool.Put(bufPtr)
+	defer func() {
+		if cap(*bufPtr) <= maxPooledUTF8Buffer {
+			utf8BufPool.Put(bufPtr)
+		}
+	}()
 
 	if uint(cap(*bufPtr)) < needed {
 		*bufPtr = make([]byte, needed)
@@ -722,7 +731,6 @@ func (paramDesc ParameterDescription) String() string {
 	return b.String()
 }
 
-// FunctionDescription type
 type FunctionDescription struct {
 	Name       string
 	Parameters []ParameterDescription
@@ -912,7 +920,7 @@ func wrapVariable(cType C.RFCTYPE, container C.RFC_FUNCTION_HANDLE, cName *C.SAP
 			return result, rfcError(errorInfo, "Failed getting xstring")
 		}
 
-		return C.GoBytes(unsafe.Pointer(byteValue), C.int(strLen)), err
+		return C.GoBytes(unsafe.Pointer(byteValue), C.int(resultLen)), err
 	case C.RFCTYPE_BCD:
 		strLen = 2*cLen + 1
 		stringValue = C.GoMallocU(strLen + 1)
@@ -1137,6 +1145,7 @@ func GetNWRFCLibVersion() (major, minor, patchlevel uint) {
 type ConnectionParameters map[string]string
 
 type Connection struct {
+	mu                 sync.Mutex
 	handle             C.RFC_CONNECTION_HANDLE
 	rstrip             bool
 	returnImportParams bool
@@ -1147,10 +1156,16 @@ type Connection struct {
 }
 
 func connectionFinalizer(conn *Connection) {
-	for _, connParam := range conn.connParams {
-		C.free(unsafe.Pointer(connParam.name))
-		C.free(unsafe.Pointer(connParam.value))
+	conn.mu.Lock()
+	defer conn.mu.Unlock()
+
+	if conn.handle != nil {
+		C.RfcCloseConnection(conn.handle, nil)
+		conn.handle = nil
+		conn.alive = false
 	}
+
+	conn.freeParams()
 }
 
 func ConnectionFromParams(connectionParams ConnectionParameters) (conn *Connection, err error) {
@@ -1159,31 +1174,17 @@ func ConnectionFromParams(connectionParams ConnectionParameters) (conn *Connecti
 		rstrip:             true,
 		returnImportParams: false,
 		alive:              false,
-		paramCount:         C.uint(len(connectionParams)),
-		connectionParams:   connectionParams,
-		connParams:         make([]C.RFC_CONNECTION_PARAMETER, len(connectionParams)),
+		connectionParams:   make(ConnectionParameters, len(connectionParams)),
 	}
 
-	i := 0
 	for name, value := range connectionParams {
-		conn.connParams[i].name, err = fillString(name)
-		if err != nil {
-			return nil, err
-		}
-
-		conn.connParams[i].value, err = fillString(value)
-		if err != nil {
-			return nil, err
-		}
-
-		i++
+		conn.connectionParams[name] = value
 	}
 
-	if err = conn.Open(); err != nil {
+	if err = conn.open(); err != nil {
+		conn.freeParams()
 		return nil, err
 	}
-
-	runtime.SetFinalizer(conn, connectionFinalizer)
 
 	return conn, nil
 }
@@ -1193,68 +1194,109 @@ func ConnectionFromDest(dest string) (conn *Connection, err error) {
 }
 
 func (conn *Connection) RStrip(rstrip bool) *Connection {
+	conn.mu.Lock()
+	defer conn.mu.Unlock()
+
 	conn.rstrip = rstrip
 
 	return conn
 }
 
 func (conn *Connection) ReturnImportParams(returnImportParams bool) *Connection {
+	conn.mu.Lock()
+	defer conn.mu.Unlock()
+
 	conn.returnImportParams = returnImportParams
 
 	return conn
 }
 
 func (conn *Connection) Alive() bool {
+	conn.mu.Lock()
+	defer conn.mu.Unlock()
+
 	return conn.alive
 }
 
 func (conn *Connection) Close() error {
+	conn.mu.Lock()
+	defer conn.mu.Unlock()
+
+	err := conn.close()
+	if err == nil {
+		runtime.SetFinalizer(conn, nil)
+	}
+
+	return err
+}
+
+func (conn *Connection) close() error {
 	var errorInfo C.RFC_ERROR_INFO
 
-	if conn.alive {
+	if conn.handle != nil {
 		conn.alive = false
 
 		rc := C.RfcCloseConnection(conn.handle, &errorInfo)
 		if rc != C.RFC_OK {
 			return rfcError(errorInfo, "Connection could not be closed")
 		}
+
+		conn.handle = nil
 	}
 
 	conn.freeParams()
-
-	runtime.SetFinalizer(conn, nil)
 
 	return nil
 }
 
 func (conn *Connection) Open() (err error) {
+	conn.mu.Lock()
+	defer conn.mu.Unlock()
+
+	return conn.open()
+}
+
+func (conn *Connection) open() (err error) {
+	if conn.handle != nil {
+		return nil
+	}
+
 	var errorInfo C.RFC_ERROR_INFO
+	if err = conn.initParams(); err != nil {
+		return err
+	}
 
 	conn.handle = C.RfcOpenConnection(&conn.connParams[0], conn.paramCount, &errorInfo)
 	if conn.handle == nil {
+		conn.freeParams()
 		return rfcError(errorInfo, "Connection could not be opened")
 	}
 
 	conn.alive = true
+	runtime.SetFinalizer(conn, connectionFinalizer)
 
 	return
 }
 
 func (conn *Connection) Reopen() (err error) {
-	err = conn.Close()
+	conn.mu.Lock()
+	defer conn.mu.Unlock()
+
+	err = conn.close()
 	if err != nil {
 		return
 	}
 
-	err = conn.Open()
-
-	return
+	return conn.open()
 }
 
 func (conn *Connection) Ping() (err error) {
+	conn.mu.Lock()
+	defer conn.mu.Unlock()
+
 	var errorInfo C.RFC_ERROR_INFO
 	if !conn.alive {
-		err = conn.Open()
+		err = conn.open()
 		if err != nil {
 			return
 		}
@@ -1269,6 +1311,9 @@ func (conn *Connection) Ping() (err error) {
 }
 
 func (conn *Connection) GetConnectionAttributes() (connAttr ConnectionAttributes, err error) {
+	conn.mu.Lock()
+	defer conn.mu.Unlock()
+
 	var errorInfo C.RFC_ERROR_INFO
 	var attributes C.RFC_ATTRIBUTES
 
@@ -1281,16 +1326,20 @@ func (conn *Connection) GetConnectionAttributes() (connAttr ConnectionAttributes
 }
 
 func (conn *Connection) GetFunctionDescription(goFuncName string) (goFuncDesc FunctionDescription, err error) {
+	conn.mu.Lock()
+	defer conn.mu.Unlock()
+
 	var errorInfo C.RFC_ERROR_INFO
 
 	funcName, err := fillString(goFuncName)
 	defer C.free(unsafe.Pointer(funcName))
+
 	if err != nil {
 		return
 	}
 
 	if !conn.alive {
-		err = conn.Open()
+		err = conn.open()
 		if err != nil {
 			return
 		}
@@ -1305,6 +1354,9 @@ func (conn *Connection) GetFunctionDescription(goFuncName string) (goFuncDesc Fu
 }
 
 func (conn *Connection) Call(goFuncName string, params any) (result map[string]any, err error) {
+	conn.mu.Lock()
+	defer conn.mu.Unlock()
+
 	if !conn.alive {
 		return nil, goRfcError("Call() method requires an open connection", nil)
 	}
@@ -1314,15 +1366,9 @@ func (conn *Connection) Call(goFuncName string, params any) (result map[string]a
 	funcName, err := fillString(goFuncName)
 
 	defer C.free(unsafe.Pointer(funcName))
+
 	if err != nil {
 		return
-	}
-
-	if !conn.alive {
-		err = conn.Open()
-		if err != nil {
-			return
-		}
 	}
 
 	funcDesc := C.RfcGetFunctionDesc(conn.handle, funcName, &errorInfo)
@@ -1406,6 +1452,45 @@ func (conn *Connection) freeParams() {
 			conn.connParams[i].value = nil
 		}
 	}
+
+	conn.connParams = nil
+	conn.paramCount = 0
+}
+
+func (conn *Connection) initParams() (err error) {
+	if len(conn.connParams) != 0 {
+		return nil
+	}
+
+	if len(conn.connectionParams) == 0 {
+		return goRfcError("at least one connection parameter is required", nil)
+	}
+
+	conn.connParams = make([]C.RFC_CONNECTION_PARAMETER, len(conn.connectionParams))
+	conn.paramCount = C.uint(len(conn.connectionParams))
+
+	i := 0
+	defer func() {
+		if err != nil {
+			conn.freeParams()
+		}
+	}()
+
+	for name, value := range conn.connectionParams {
+		conn.connParams[i].name, err = fillString(name)
+		if err != nil {
+			return err
+		}
+
+		conn.connParams[i].value, err = fillString(value)
+		if err != nil {
+			return err
+		}
+
+		i++
+	}
+
+	return nil
 }
 
 func asString(v any) string {
