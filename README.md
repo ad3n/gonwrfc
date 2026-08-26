@@ -145,6 +145,35 @@ go run hello_gorfc.go
 
 See the _hello_gorfc.go_ example and _gorfc_test.go_ unit tests.
 
+### Connection pooling
+
+Connections remain stateful by default. For independent calls that do not need
+to share one ABAP session, an opt-in pool can reuse a bounded number of
+connections:
+
+```go
+pool, err := gorfc.NewConnectionPool(params, gorfc.PoolConfig{
+    MaxOpen: 10,
+    MaxIdle: 4,
+})
+if err != nil {
+    return err
+}
+defer pool.Close()
+
+conn, err := pool.Acquire(ctx)
+if err != nil {
+    return err
+}
+defer pool.Release(conn) // return pooled connections; do not close them directly
+
+result, err := conn.Call("STFC_CONNECTION", callParams)
+```
+
+`Acquire` waits when `MaxOpen` connections are in use and respects context
+cancellation. Closing the pool immediately closes idle connections; checked-out
+connections are closed when returned.
+
 The GO RFC Connector follows the same principles and the implementation model of [Python](https://github.com/SAP/PyRFC) and [nodejs](https://github.com/SAP/node-rfc) RFC connectors and you may check examples and documentation there as well.
 
 ```go
