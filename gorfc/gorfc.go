@@ -91,17 +91,12 @@ type RfcError struct {
 
 func (err RfcError) Error() string {
 	var b strings.Builder
-
-	b.Grow(
-		len(err.Description) +
-			len(err.ErrorInfo.String()) +
-			20,
-	)
+	b.Grow(len(err.Description) + err.ErrorInfo.stringLen() + 24)
 
 	b.WriteString("NWRFC SDK error: ")
 	b.WriteString(err.Description)
 	b.WriteString(" | ")
-	b.WriteString(err.ErrorInfo.String())
+	err.ErrorInfo.appendTo(&b)
 
 	return b.String()
 }
@@ -559,21 +554,18 @@ func wrapError(errorInfo *C.RFC_ERROR_INFO) rfcSDKError {
 
 func (err rfcSDKError) String() string {
 	var b strings.Builder
+	b.Grow(err.stringLen())
+	err.appendTo(&b)
+	return b.String()
+}
 
-	b.Grow(
-		len(err.Message) +
-			len(err.Code) +
-			len(err.Key) +
-			len(err.AbapMsgClass) +
-			len(err.AbapMsgType) +
-			len(err.AbapMsgNumber) +
-			len(err.AbapMsgV1) +
-			len(err.AbapMsgV2) +
-			len(err.AbapMsgV3) +
-			len(err.AbapMsgV4) +
-			32,
-	)
+func (err rfcSDKError) stringLen() int {
+	return 48 + len(err.Message) + len(err.Code) + len(err.Key) +
+		len(err.AbapMsgClass) + len(err.AbapMsgType) + len(err.AbapMsgNumber) +
+		len(err.AbapMsgV1) + len(err.AbapMsgV2) + len(err.AbapMsgV3) + len(err.AbapMsgV4)
+}
 
+func (err rfcSDKError) appendTo(b *strings.Builder) {
 	b.WriteString("rfcSDKError[")
 	b.WriteString(err.Message)
 	b.WriteString(", ")
@@ -595,8 +587,6 @@ func (err rfcSDKError) String() string {
 	b.WriteString(", ")
 	b.WriteString(err.AbapMsgV4)
 	b.WriteByte(']')
-
-	return b.String()
 }
 
 type ConnectionAttributes map[string]string
@@ -631,14 +621,17 @@ type TypeDescription struct {
 
 func (t TypeDescription) String() string {
 	var b strings.Builder
+	b.Grow(len(t.Name) + 64)
+	t.appendTo(&b)
+	return b.String()
+}
 
+func (t TypeDescription) appendTo(b *strings.Builder) {
 	b.WriteString(t.Name)
 	b.WriteString(" NucLength=")
-	b.WriteString(strconv.FormatUint(uint64(t.NucLength), 10))
+	appendUint(b, uint64(t.NucLength))
 	b.WriteString(" UcLength=")
-	b.WriteString(strconv.FormatUint(uint64(t.UcLength), 10))
-
-	return b.String()
+	appendUint(b, uint64(t.UcLength))
 }
 
 func wrapTypeDescription(typeDesc C.RFC_TYPE_DESC_HANDLE) (goTypeDesc TypeDescription, err error) {
@@ -735,7 +728,18 @@ type ParameterDescription struct {
 
 func (paramDesc ParameterDescription) String() string {
 	var b strings.Builder
+	b.Grow(paramDesc.stringLen())
+	paramDesc.appendTo(&b)
+	return b.String()
+}
 
+func (paramDesc ParameterDescription) stringLen() int {
+	return 192 + len(paramDesc.Name) + len(paramDesc.ParameterType) +
+		len(paramDesc.Direction) + len(paramDesc.DefaultValue) +
+		len(paramDesc.ParameterText) + len(paramDesc.TypeDesc.Name)
+}
+
+func (paramDesc ParameterDescription) appendTo(b *strings.Builder) {
 	b.WriteString("paramDesc(name= ")
 	b.WriteString(paramDesc.Name)
 
@@ -746,13 +750,13 @@ func (paramDesc ParameterDescription) String() string {
 	b.WriteString(paramDesc.Direction)
 
 	b.WriteString(", nucLen= ")
-	b.WriteString(strconv.FormatUint(uint64(paramDesc.NucLength), 10))
+	appendUint(b, uint64(paramDesc.NucLength))
 
 	b.WriteString(", ucLen= ")
-	b.WriteString(strconv.FormatUint(uint64(paramDesc.UcLength), 10))
+	appendUint(b, uint64(paramDesc.UcLength))
 
 	b.WriteString(", dec= ")
-	b.WriteString(strconv.FormatUint(uint64(paramDesc.Decimals), 10))
+	appendUint(b, uint64(paramDesc.Decimals))
 
 	b.WriteString(", defValue= ")
 	b.WriteString(paramDesc.DefaultValue)
@@ -761,14 +765,12 @@ func (paramDesc ParameterDescription) String() string {
 	b.WriteString(paramDesc.ParameterText)
 
 	b.WriteString(", optional= ")
-	b.WriteString(strconv.FormatBool(paramDesc.Optional))
+	appendBool(b, paramDesc.Optional)
 
 	b.WriteString(", typeDesc= ")
-	b.WriteString(paramDesc.TypeDesc.String())
+	paramDesc.TypeDesc.appendTo(b)
 
 	b.WriteByte(')')
-
-	return b.String()
 }
 
 type FunctionDescription struct {
@@ -778,6 +780,11 @@ type FunctionDescription struct {
 
 func (funcDesc FunctionDescription) String() string {
 	var b strings.Builder
+	size := len(funcDesc.Name) + 42
+	for i := range funcDesc.Parameters {
+		size += funcDesc.Parameters[i].stringLen() + 5
+	}
+	b.Grow(size)
 
 	b.WriteString("FunctionDescription:\n Name: ")
 	b.WriteString(funcDesc.Name)
@@ -785,11 +792,26 @@ func (funcDesc FunctionDescription) String() string {
 
 	for i := range funcDesc.Parameters {
 		b.WriteString("    ")
-		b.WriteString(funcDesc.Parameters[i].String())
+		funcDesc.Parameters[i].appendTo(&b)
 		b.WriteByte('\n')
 	}
 
 	return b.String()
+}
+
+func appendUint(b *strings.Builder, value uint64) {
+	var scratch [20]byte
+	b.Write(strconv.AppendUint(scratch[:0], value, 10))
+}
+
+func appendBool(b *strings.Builder, value bool) {
+	if value {
+		b.WriteString("true")
+
+		return
+	}
+
+	b.WriteString("false")
 }
 
 func wrapFunctionDescription(funcDesc C.RFC_FUNCTION_DESC_HANDLE) (goFuncDesc FunctionDescription, err error) {
