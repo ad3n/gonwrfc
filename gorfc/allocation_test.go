@@ -1,6 +1,9 @@
 package gorfc
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 var stringResult string
 
@@ -69,5 +72,32 @@ func TestDescriptionStringAllocations(t *testing.T) {
 				t.Fatalf("String() allocated %.0f times; want at most the result allocation", allocs)
 			}
 		})
+	}
+}
+
+func TestStringConversionRoundTrip(t *testing.T) {
+	tests := []string{
+		"",
+		"plain ASCII",
+		"Hällö SÄP",
+		"日本語 العربية",
+		"😀🧑🏽‍💻",
+		strings.Repeat("a😀é", 32768),
+	}
+
+	for _, input := range tests {
+		converted, length, err := fillStringWithLength(input)
+		if err != nil {
+			t.Fatalf("convert %q to SAP_UC: %v", input, err)
+		}
+
+		got, err := nWrapString(converted, length, false)
+		freeSAPUC(converted)
+		if err != nil {
+			t.Fatalf("convert SAP_UC for %q to UTF-8: %v", input, err)
+		}
+		if got != input {
+			t.Fatalf("round trip mismatch: got %q, want %q", got, input)
+		}
 	}
 }

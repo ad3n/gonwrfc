@@ -133,6 +133,10 @@ func fillString(gostr string) (sapuc *C.SAP_UC, err error) {
 	return
 }
 
+func freeSAPUC(value *C.SAP_UC) {
+	C.free(unsafe.Pointer(value))
+}
+
 // fillStringWithLength avoids a second C boundary crossing to calculate the
 // converted SAP_UC length. String values use this hot path during every call.
 func fillStringWithLength(gostr string) (sapuc *C.SAP_UC, length C.uint, err error) {
@@ -147,7 +151,10 @@ func fillStringWithLength(gostr string) (sapuc *C.SAP_UC, length C.uint, err err
 	var errorInfo C.RFC_ERROR_INFO
 	var resultLen C.uint
 
-	sapucSize := C.uint(len(gostr)*2 + 1)
+	// A UTF-16 representation never needs more code units than the source
+	// UTF-8 needs bytes (including surrogate pairs). Avoid doubling every
+	// input allocation on this per-parameter hot path.
+	sapucSize := C.uint(len(gostr) + 1)
 	sapuc = C.GoMallocU(sapucSize)
 	*sapuc = 0
 	var cStr *C.RFC_BYTE
@@ -494,7 +501,9 @@ func nWrapString(sapuc *C.SAP_UC, sapucLength C.uint, strip bool) (string, error
 		return "", nil
 	}
 
-	needed := uint(5*sapucLength + 1)
+	// One UTF-16 code unit expands to at most three UTF-8 bytes. A surrogate
+	// pair expands to four bytes, so three bytes per unit remains sufficient.
+	needed := uint(3*sapucLength + 1)
 
 	bufPtr := utf8BufPool.Get().(*[]byte)
 	defer func() {

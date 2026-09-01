@@ -174,6 +174,29 @@ result, err := conn.Call("STFC_CONNECTION", callParams)
 cancellation. Closing the pool immediately closes idle connections; checked-out
 connections are closed when returned.
 
+### Performance benchmarks
+
+Local conversion benchmarks run without connecting to SAP:
+
+```bash
+go test ./gorfc -run '^$' -bench 'Benchmark(Fill|Wrap)String' -benchmem -count 8
+```
+
+End-to-end benchmarks are deliberately opt-in because every iteration invokes
+`STFC_CONNECTION`. Configure `RFC_INI` as usual, explicitly select a non-production
+destination, and run:
+
+```bash
+GORFC_BENCH_DEST=QAS go test ./gorfc -run '^$' -bench BenchmarkProduction -benchmem -benchtime 10s -count 5
+```
+
+`BenchmarkProductionCall` measures the complete serial call path with 32-byte
+and 255-byte payloads supported by the standard function. `BenchmarkProductionPool` pre-opens one connection per
+`GOMAXPROCS` and measures steady-state concurrent throughput. Use the same host,
+SAP destination, SDK version, `GOMAXPROCS`, and benchmark duration when comparing
+revisions. CPU and heap profiles can be collected with the standard
+`-cpuprofile` and `-memprofile` test flags.
+
 The GO RFC Connector follows the same principles and the implementation model of [Python](https://github.com/SAP/PyRFC) and [nodejs](https://github.com/SAP/node-rfc) RFC connectors and you may check examples and documentation there as well.
 
 ```go
