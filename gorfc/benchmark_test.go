@@ -8,6 +8,28 @@ import (
 
 var benchmarkString string
 
+func BenchmarkStringRoundTrip(b *testing.B) {
+	for _, value := range []string{"", "STFC_CONNECTION", strings.Repeat("😀é", 1024)} {
+		b.Run(strconv.Itoa(len(value)), func(b *testing.B) {
+			b.ReportAllocs()
+			b.SetBytes(int64(len(value)))
+			for b.Loop() {
+				converted, length, err := fillStringWithLength(value)
+				if err != nil {
+					freeSAPUC(converted)
+					b.Fatal(err)
+				}
+				result, err := nWrapString(converted, length, false)
+				freeSAPUC(converted)
+				if err != nil || result != value {
+					b.Fatalf("round trip: got %q, error %v", result, err)
+				}
+				benchmarkString = result
+			}
+		})
+	}
+}
+
 func BenchmarkFillString(b *testing.B) {
 	for _, size := range []int{16, 1024, 65536} {
 		value := strings.Repeat("a", size)

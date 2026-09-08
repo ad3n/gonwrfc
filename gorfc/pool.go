@@ -12,31 +12,23 @@ var (
 	ErrAlreadyReleased   = errors.New("gorfc: connection was already released")
 )
 
-// PoolConfig controls the number of SAP sessions retained by a ConnectionPool.
-// MaxOpen must be positive. MaxIdle is clamped to MaxOpen.
 type PoolConfig struct {
 	MaxOpen int
 	MaxIdle int
 }
 
-// ConnectionPool is an opt-in pool of independent SAP RFC sessions. Existing
-// Connection behavior remains stateful and unchanged. A checked-out connection
-// must be returned with Release rather than closed directly.
 type ConnectionPool struct {
 	params ConnectionParameters
 	idle   chan *Connection
 	slots  chan struct{}
 	done   chan struct{}
 
-	managed map[*Connection]bool // true while checked out
+	managed map[*Connection]bool
 
 	mu     sync.Mutex
 	closed bool
 }
 
-// NewConnectionPool creates a lazy pool; it does not open a connection until
-// Acquire is called. Connection parameters are copied so callers may reuse or
-// modify their input map safely.
 func NewConnectionPool(params ConnectionParameters, config PoolConfig) (*ConnectionPool, error) {
 	if config.MaxOpen <= 0 {
 		return nil, errors.New("gorfc: MaxOpen must be greater than zero")
@@ -62,15 +54,13 @@ func NewConnectionPool(params ConnectionParameters, config PoolConfig) (*Connect
 	}, nil
 }
 
-// Acquire returns an idle connection or lazily opens a new one. It waits until
-// a slot is available or ctx is cancelled.
 func (pool *ConnectionPool) Acquire(ctx context.Context) (*Connection, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 
 	for {
-		// Prefer reuse before reserving capacity for a new SAP session.
+
 		select {
 		case conn := <-pool.idle:
 			if pool.checkoutIdle(conn) {
@@ -127,8 +117,6 @@ func (pool *ConnectionPool) checkoutIdle(conn *Connection) bool {
 	return false
 }
 
-// Release returns a connection to the pool. Closed connections are discarded
-// and will be replaced lazily by a later Acquire.
 func (pool *ConnectionPool) Release(conn *Connection) error {
 	if conn == nil {
 		return ErrForeignConnection
@@ -166,8 +154,6 @@ func (pool *ConnectionPool) Release(conn *Connection) error {
 	}
 }
 
-// Close closes all currently idle connections and prevents new acquisitions.
-// Connections already checked out are closed when they are released.
 func (pool *ConnectionPool) Close() error {
 	pool.mu.Lock()
 	if pool.closed {

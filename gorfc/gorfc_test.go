@@ -14,19 +14,13 @@ import (
 	"github.com/ad3n/gonwrfc/gorfc/testutils"
 )
 
-//
-// NW RFC Lib Version
-//
 func TestNWRFCLibVersion(t *testing.T) {
 	major, minor, patchlevel := GetNWRFCLibVersion()
-	assert.Equal(t, uint(7500), major) // adapt to your NW RFC Lib version
+	assert.Equal(t, uint(7500), major)
 	assert.Equal(t, uint(0), minor)
 	assert.Greater(t, patchlevel, uint(4))
 }
 
-//
-// Connection Tests
-//
 func TestConnect(t *testing.T) {
 	fmt.Println("Connection test: Open and Close")
 	c, err := ConnectionFromParams(abapSystem())
@@ -73,9 +67,8 @@ func TestConnectionAttributes(t *testing.T) {
 		"partnerIPv6":           struct{}{},
 	}
 
-	// check if all parameters returned
 	assert.Equal(t, len(a), len(paramNames))
-	// and the content of some
+
 	assert.Equal(t, strings.ToUpper(abapSystem()["user"]), a["user"])
 	assert.Equal(t, abapSystem()["sysnr"], a["sysNumber"])
 	assert.Equal(t, abapSystem()["client"], a["client"])
@@ -118,7 +111,7 @@ func TestConnectionEcho(t *testing.T) {
 	type importStruct struct {
 		XXX string
 	}
-	params := map[string]interface{}{
+	params := map[string]any{
 		"REQUTEXT": "Hällö",
 	}
 	r, err := c.Call("STFC_CONNECTION", params)
@@ -127,10 +120,6 @@ func TestConnectionEcho(t *testing.T) {
 	assert.Equal(t, params["REQUTEXT"], r["ECHOTEXT"])
 	c.Close()
 }
-
-//
-// Connection Errors
-//
 
 func TestWrongUserConnect(t *testing.T) {
 	fmt.Println("Connection Error: Logon")
@@ -166,8 +155,8 @@ func TestWrongParameter(t *testing.T) {
 	c, err := ConnectionFromParams(abapSystem())
 	assert.Nil(t, err)
 	r, err := c.Call("STFC_CONNECTION", importStruct{"wrong param"})
-	assert.Equal(t, map[string]interface{}(nil), r)
-	assert.Equal(t, "RFC_INVALID_PARAMETER", err.(*RfcError).ErrorInfo.Code) // todo: should be "20" ??
+	assert.Equal(t, map[string]any(nil), r)
+	assert.Equal(t, "RFC_INVALID_PARAMETER", err.(*RfcError).ErrorInfo.Code)
 	assert.Equal(t, "RFC_INVALID_PARAMETER", err.(*RfcError).ErrorInfo.Key)
 	assert.Equal(t, "field 'XXX' not found", err.(*RfcError).ErrorInfo.Message)
 	c.Close()
@@ -179,14 +168,10 @@ func TestCallOverClosedConnection(t *testing.T) {
 	assert.Nil(t, err)
 	c.Close()
 	assert.False(t, c.Alive())
-	r, err := c.Call("STFC_CONNECTION", map[string]interface{}{"REQUTEXT": "HELLÖ SÄP"})
+	r, err := c.Call("STFC_CONNECTION", map[string]any{"REQUTEXT": "HELLÖ SÄP"})
 	assert.Nil(t, r)
 	assert.Equal(t, "Call() method requires an open connection", err.(*GoRfcError).Description)
 }
-
-//
-// STFC Tests
-//
 
 func TestFunctionDescription(t *testing.T) {
 	fmt.Println("STFC: Get Function Description")
@@ -231,7 +216,7 @@ func TestTableRowAsStructure(t *testing.T) {
 	assert.Nil(t, r["IMPORTSTUCT"])
 
 	assert.NotNil(t, r["ECHOSTRUCT"])
-	echoStruct := r["ECHOSTRUCT"].(map[string]interface{})
+	echoStruct := r["ECHOSTRUCT"].(map[string]any)
 	assert.Equal(t, importStruct.RFCFLOAT, echoStruct["RFCFLOAT"])
 	assert.Equal(t, importStruct.RFCCHAR1, echoStruct["RFCCHAR1"])
 	assert.Equal(t, importStruct.RFCCHAR2, echoStruct["RFCCHAR2"])
@@ -246,7 +231,7 @@ func TestTableRowAsStructure(t *testing.T) {
 	assert.Equal(t, importStruct.RFCDATA2, echoStruct["RFCDATA2"])
 
 	assert.NotNil(t, r["RFCTABLE"])
-	echoTableLine := r["RFCTABLE"].([]interface{})[0].(map[string]interface{})
+	echoTableLine := r["RFCTABLE"].([]any)[0].(map[string]any)
 	assert.Equal(t, importStruct.RFCFLOAT, echoTableLine["RFCFLOAT"])
 	assert.Equal(t, importStruct.RFCCHAR1, echoTableLine["RFCCHAR1"])
 	assert.Equal(t, importStruct.RFCCHAR2, echoTableLine["RFCCHAR2"])
@@ -267,8 +252,8 @@ func TestTableRowAsMap(t *testing.T) {
 	c, err := ConnectionFromParams(abapSystem())
 	assert.Nil(t, err)
 
-	params := map[string]interface{}{
-		"IMPORTSTRUCT": map[string]interface{}{
+	params := map[string]any{
+		"IMPORTSTRUCT": map[string]any{
 			"RFCFLOAT": 1.23456789,
 			"RFCCHAR1": "A",
 			"RFCCHAR2": "BC",
@@ -286,8 +271,8 @@ func TestTableRowAsMap(t *testing.T) {
 	r, _ := c.Call("STFC_STRUCTURE", params)
 
 	assert.NotNil(t, r["ECHOSTRUCT"])
-	importStruct := params["IMPORTSTRUCT"].(map[string]interface{})
-	echoStruct := r["ECHOSTRUCT"].(map[string]interface{})
+	importStruct := params["IMPORTSTRUCT"].(map[string]any)
+	echoStruct := r["ECHOSTRUCT"].(map[string]any)
 	assert.Equal(t, importStruct["RFCFLOAT"], echoStruct["RFCFLOAT"])
 	assert.Equal(t, importStruct["RFCCHAR1"], echoStruct["RFCCHAR1"])
 	assert.Equal(t, importStruct["RFCCHAR2"], echoStruct["RFCCHAR2"])
@@ -308,36 +293,34 @@ func TestTableRowAsVariable(t *testing.T) {
 	c, err := ConnectionFromParams(abapSystem())
 	assert.Nil(t, err)
 
-	// array of byte sequences
 	certTable := [][]byte{
 		[]byte("ABC"),
 		[]byte("DEF"),
 	}
-	params := map[string]interface{}{
+	params := map[string]any{
 		"IT_CERTLIST": certTable,
 	}
 	r, err := c.Call("SSFR_PSE_CREATE", params)
 	assert.Nil(t, err)
-	bapiret := r["ET_BAPIRET2"].([]interface{})[0].(map[string]interface{})
+	bapiret := r["ET_BAPIRET2"].([]any)[0].(map[string]any)
 	assert.Equal(t, bapiret["ID"], "1S")
 	assert.Equal(t, bapiret["MESSAGE"], "Creating PSE failed (INITIAL)")
 
-	// array of maps, works as well, as a workaround
-	certTableMap := []map[string]interface{}{
-		map[string]interface{}{
+	certTableMap := []map[string]any{
+		map[string]any{
 			"": []byte("ABC"),
 		},
-		map[string]interface{}{
+		map[string]any{
 			"": []byte("DEF"),
 		},
 	}
-	params = map[string]interface{}{
+	params = map[string]any{
 		"IT_CERTLIST": certTableMap,
 	}
 	r, err = c.Call("SSFR_PSE_CREATE", params)
 	assert.Nil(t, err)
-	// same error message
-	bapiret = r["ET_BAPIRET2"].([]interface{})[0].(map[string]interface{})
+
+	bapiret = r["ET_BAPIRET2"].([]any)[0].(map[string]any)
 	assert.Equal(t, bapiret["ID"], "1S")
 	assert.Equal(t, bapiret["MESSAGE"], "Creating PSE failed (INITIAL)")
 	c.Close()
@@ -345,18 +328,17 @@ func TestTableRowAsVariable(t *testing.T) {
 
 func TestConfigParameter(t *testing.T) {
 	fmt.Println("STFC: Connection options: rstrip, returnImportParams")
-	//rstrip = false
+
 	c, err := ConnectionFromParams(abapSystem())
 	assert.Nil(t, err)
 	c.RStrip(false)
-	r, _ := c.Call("STFC_CONNECTION", map[string]interface{}{"REQUTEXT": "HELLÖ SÄP"})
+	r, _ := c.Call("STFC_CONNECTION", map[string]any{"REQUTEXT": "HELLÖ SÄP"})
 	assert.Equal(t, 257, len(reflect.ValueOf(r["ECHOTEXT"]).String()))
 	assert.Equal(t, "HELLÖ SÄP", strings.TrimSpace(reflect.ValueOf(r["ECHOTEXT"]).String()))
 
-	//returnImportParams = true
 	c, _ = ConnectionFromParams(abapSystem())
 	c.ReturnImportParams(true)
-	r, _ = c.Call("STFC_CONNECTION", map[string]interface{}{"REQUTEXT": "HELLÖ SÄP"})
+	r, _ = c.Call("STFC_CONNECTION", map[string]any{"REQUTEXT": "HELLÖ SÄP"})
 	assert.Equal(t, "HELLÖ SÄP", r["REQUTEXT"])
 	c.Close()
 }
@@ -365,7 +347,7 @@ func TestInvalidParameterFunctionCall(t *testing.T) {
 	fmt.Println("STFC: Invalid RFM parameter")
 	c, err := ConnectionFromParams(abapSystem())
 	assert.Nil(t, err)
-	r, err := c.Call("STFC_CONNECTION", map[string]interface{}{"XXX": "wrongParameter"})
+	r, err := c.Call("STFC_CONNECTION", map[string]any{"XXX": "wrongParameter"})
 	assert.Nil(t, r)
 	assert.NotNil(t, err)
 	assert.Equal(t, "Could not get the parameter description for \"XXX\"", err.(*RfcError).Description)
@@ -375,16 +357,12 @@ func TestInvalidParameterFunctionCall(t *testing.T) {
 	c.Close()
 }
 
-//
-// Error test
-//
-
 func TestErrorFunctionCall(t *testing.T) {
 	fmt.Println("Error: ABAP message")
 	c, err := ConnectionFromParams(abapSystem())
 	assert.Nil(t, err)
 
-	r, err := c.Call("RFC_RAISE_ERROR", map[string]interface{}{"MESSAGETYPE": "A"})
+	r, err := c.Call("RFC_RAISE_ERROR", map[string]any{"MESSAGETYPE": "A"})
 	assert.Nil(t, r)
 	assert.NotNil(t, err)
 	assert.Equal(t, "Could not invoke function \"RFC_RAISE_ERROR\"", err.(*RfcError).Description)
@@ -409,27 +387,23 @@ func abapSystem() ConnectionParameters {
 	}
 }
 
-//
-// Datatypes
-//
-
 func TestUtcLong(t *testing.T) {
 	fmt.Println("Datatypes: UTCLONG min, max, initial")
 	c, err := ConnectionFromDest("QM7")
 	assert.Nil(t, err)
 
 	utctest := testutils.RFC_MATH["UTCLONG"].(map[string]string)["MIN"]
-	r, err := c.Call("ZDATATYPES", map[string]interface{}{"IV_UTCLONG": utctest})
+	r, err := c.Call("ZDATATYPES", map[string]any{"IV_UTCLONG": utctest})
 	assert.Nil(t, err)
 	assert.Equal(t, utctest, reflect.ValueOf(r["EV_UTCLONG"]).String())
 
 	utctest = testutils.RFC_MATH["UTCLONG"].(map[string]string)["MAX"]
-	r, err = c.Call("ZDATATYPES", map[string]interface{}{"IV_UTCLONG": utctest})
+	r, err = c.Call("ZDATATYPES", map[string]any{"IV_UTCLONG": utctest})
 	assert.Nil(t, err)
 	assert.Equal(t, utctest, reflect.ValueOf(r["EV_UTCLONG"]).String())
 
 	utctest = testutils.RFC_MATH["UTCLONG"].(map[string]string)["INITIAL"]
-	r, err = c.Call("ZDATATYPES", map[string]interface{}{"IV_UTCLONG": utctest})
+	r, err = c.Call("ZDATATYPES", map[string]any{"IV_UTCLONG": utctest})
 	assert.Nil(t, err)
 	assert.Equal(t, utctest, reflect.ValueOf(r["EV_UTCLONG"]).String())
 
@@ -445,23 +419,23 @@ func TestIntMaxPositive(t *testing.T) {
 	rfcInt2 := testutils.RFC_MATH["RFC_INT2"].(map[string]int16)
 	rfcInt4 := testutils.RFC_MATH["RFC_INT4"].(map[string]int32)
 
-	importStruct := map[string]interface{}{
+	importStruct := map[string]any{
 		"RFCINT1": rfcInt1["MAX"] - 1,
 		"RFCINT2": rfcInt2["MAX"] - 1,
 		"RFCINT4": rfcInt4["MAX"] - 1,
 	}
 
-	params := map[string]interface{}{
+	params := map[string]any{
 		"IMPORTSTRUCT": importStruct,
-		"RFCTABLE":     []interface{}{importStruct},
+		"RFCTABLE":     []any{importStruct},
 	}
 	r, err := c.Call("STFC_STRUCTURE", params)
 	assert.Nil(t, err)
 	assert.NotNil(t, r)
 
-	echoStruct := r["ECHOSTRUCT"].(map[string]interface{})
-	rfcTable_0 := r["RFCTABLE"].([]interface{})[0].(map[string]interface{})
-	rfcTable_1 := r["RFCTABLE"].([]interface{})[1].(map[string]interface{})
+	echoStruct := r["ECHOSTRUCT"].(map[string]any)
+	rfcTable_0 := r["RFCTABLE"].([]any)[0].(map[string]any)
+	rfcTable_1 := r["RFCTABLE"].([]any)[1].(map[string]any)
 
 	assert.Equal(t, importStruct["RFCINT1"], echoStruct["RFCINT1"])
 	assert.Equal(t, importStruct["RFCINT1"], rfcTable_0["RFCINT1"])
@@ -487,23 +461,23 @@ func TestIntMaxNegative(t *testing.T) {
 	rfcInt2 := testutils.RFC_MATH["RFC_INT2"].(map[string]int16)
 	rfcInt4 := testutils.RFC_MATH["RFC_INT4"].(map[string]int32)
 
-	importStruct := map[string]interface{}{
+	importStruct := map[string]any{
 		"RFCINT1": rfcInt1["MIN"],
 		"RFCINT2": rfcInt2["MIN"],
 		"RFCINT4": rfcInt4["MIN"],
 	}
 
-	params := map[string]interface{}{
+	params := map[string]any{
 		"IMPORTSTRUCT": importStruct,
-		"RFCTABLE":     []interface{}{importStruct},
+		"RFCTABLE":     []any{importStruct},
 	}
 	r, err := c.Call("STFC_STRUCTURE", params)
 	assert.Nil(t, err)
 	assert.NotNil(t, r)
 
-	echoStruct := r["ECHOSTRUCT"].(map[string]interface{})
-	rfcTable_0 := r["RFCTABLE"].([]interface{})[0].(map[string]interface{})
-	rfcTable_1 := r["RFCTABLE"].([]interface{})[1].(map[string]interface{})
+	echoStruct := r["ECHOSTRUCT"].(map[string]any)
+	rfcTable_0 := r["RFCTABLE"].([]any)[0].(map[string]any)
+	rfcTable_1 := r["RFCTABLE"].([]any)[1].(map[string]any)
 
 	assert.Equal(t, importStruct["RFCINT1"], echoStruct["RFCINT1"])
 	assert.Equal(t, importStruct["RFCINT1"], rfcTable_0["RFCINT1"])
@@ -525,9 +499,9 @@ func TestFloatMinMaxPositive(t *testing.T) {
 	c, err := ConnectionFromDest("MME")
 	assert.Nil(t, err)
 
-	mathFloat := testutils.RFC_MATH["FLOAT"].(map[string]interface{})
-	mathDecf16 := testutils.RFC_MATH["DECF16"].(map[string]interface{})
-	mathDecf34 := testutils.RFC_MATH["DECF34"].(map[string]interface{})
+	mathFloat := testutils.RFC_MATH["FLOAT"].(map[string]any)
+	mathDecf16 := testutils.RFC_MATH["DECF16"].(map[string]any)
+	mathDecf34 := testutils.RFC_MATH["DECF34"].(map[string]any)
 
 	is_input := map[string]string{
 		"ZFLTP_MIN":   mathFloat["POS"].(map[string]string)["MIN"],
@@ -538,26 +512,23 @@ func TestFloatMinMaxPositive(t *testing.T) {
 		"ZDECF34_MAX": mathDecf34["POS"].(map[string]string)["MAX"],
 	}
 
-	params := map[string]interface{}{
+	params := map[string]any{
 		"IS_INPUT": is_input,
 	}
 	r, err := c.Call("/COE/RBP_FE_DATATYPES", params)
 	assert.Nil(t, err)
 	assert.NotNil(t, r)
 
-	// Float
 	f, _ := strconv.ParseFloat(is_input["ZFLTP_MIN"], 64)
-	assert.Equal(t, r["ES_OUTPUT"].(map[string]interface{})["ZFLTP_MIN"], f)
+	assert.Equal(t, r["ES_OUTPUT"].(map[string]any)["ZFLTP_MIN"], f)
 	f, _ = strconv.ParseFloat(is_input["ZFLTP_MAX"], 64)
-	assert.Equal(t, r["ES_OUTPUT"].(map[string]interface{})["ZFLTP_MAX"], f)
+	assert.Equal(t, r["ES_OUTPUT"].(map[string]any)["ZFLTP_MAX"], f)
 
-	// Decf16
-	assert.Equal(t, r["ES_OUTPUT"].(map[string]interface{})["ZDECF16_MIN"], is_input["ZDECF16_MIN"])
-	assert.Equal(t, r["ES_OUTPUT"].(map[string]interface{})["ZDECF16_MAX"], is_input["ZDECF16_MAX"])
+	assert.Equal(t, r["ES_OUTPUT"].(map[string]any)["ZDECF16_MIN"], is_input["ZDECF16_MIN"])
+	assert.Equal(t, r["ES_OUTPUT"].(map[string]any)["ZDECF16_MAX"], is_input["ZDECF16_MAX"])
 
-	// Decf34
-	assert.Equal(t, r["ES_OUTPUT"].(map[string]interface{})["ZDECF34_MIN"], is_input["ZDECF34_MIN"])
-	assert.Equal(t, r["ES_OUTPUT"].(map[string]interface{})["ZDECF34_MAX"], is_input["ZDECF34_MAX"])
+	assert.Equal(t, r["ES_OUTPUT"].(map[string]any)["ZDECF34_MIN"], is_input["ZDECF34_MIN"])
+	assert.Equal(t, r["ES_OUTPUT"].(map[string]any)["ZDECF34_MAX"], is_input["ZDECF34_MAX"])
 
 	c.Close()
 }
@@ -567,9 +538,9 @@ func TestFloatMinMaxNegative(t *testing.T) {
 	c, err := ConnectionFromDest("MME")
 	assert.Nil(t, err)
 
-	mathFloat := testutils.RFC_MATH["FLOAT"].(map[string]interface{})
-	mathDecf16 := testutils.RFC_MATH["DECF16"].(map[string]interface{})
-	mathDecf34 := testutils.RFC_MATH["DECF34"].(map[string]interface{})
+	mathFloat := testutils.RFC_MATH["FLOAT"].(map[string]any)
+	mathDecf16 := testutils.RFC_MATH["DECF16"].(map[string]any)
+	mathDecf34 := testutils.RFC_MATH["DECF34"].(map[string]any)
 
 	is_input := map[string]string{
 		"ZFLTP_MIN":   mathFloat["NEG"].(map[string]string)["MIN"],
@@ -580,26 +551,23 @@ func TestFloatMinMaxNegative(t *testing.T) {
 		"ZDECF34_MAX": mathDecf34["NEG"].(map[string]string)["MAX"],
 	}
 
-	params := map[string]interface{}{
+	params := map[string]any{
 		"IS_INPUT": is_input,
 	}
 	r, err := c.Call("/COE/RBP_FE_DATATYPES", params)
 	assert.Nil(t, err)
 	assert.NotNil(t, r)
 
-	// Float
 	f, _ := strconv.ParseFloat(is_input["ZFLTP_MIN"], 64)
-	assert.Equal(t, r["ES_OUTPUT"].(map[string]interface{})["ZFLTP_MIN"], f)
+	assert.Equal(t, r["ES_OUTPUT"].(map[string]any)["ZFLTP_MIN"], f)
 	f, _ = strconv.ParseFloat(is_input["ZFLTP_MAX"], 64)
-	assert.Equal(t, r["ES_OUTPUT"].(map[string]interface{})["ZFLTP_MAX"], f)
+	assert.Equal(t, r["ES_OUTPUT"].(map[string]any)["ZFLTP_MAX"], f)
 
-	// Decf16
-	assert.Equal(t, r["ES_OUTPUT"].(map[string]interface{})["ZDECF16_MIN"], is_input["ZDECF16_MIN"])
-	assert.Equal(t, r["ES_OUTPUT"].(map[string]interface{})["ZDECF16_MAX"], is_input["ZDECF16_MAX"])
+	assert.Equal(t, r["ES_OUTPUT"].(map[string]any)["ZDECF16_MIN"], is_input["ZDECF16_MIN"])
+	assert.Equal(t, r["ES_OUTPUT"].(map[string]any)["ZDECF16_MAX"], is_input["ZDECF16_MAX"])
 
-	// Decf34
-	assert.Equal(t, r["ES_OUTPUT"].(map[string]interface{})["ZDECF34_MIN"], is_input["ZDECF34_MIN"])
-	assert.Equal(t, r["ES_OUTPUT"].(map[string]interface{})["ZDECF34_MAX"], is_input["ZDECF34_MAX"])
+	assert.Equal(t, r["ES_OUTPUT"].(map[string]any)["ZDECF34_MIN"], is_input["ZDECF34_MIN"])
+	assert.Equal(t, r["ES_OUTPUT"].(map[string]any)["ZDECF34_MAX"], is_input["ZDECF34_MAX"])
 
 	c.Close()
 }
@@ -609,11 +577,11 @@ func TestRAW_and_BYTE_acceptBuffer(t *testing.T) {
 
 	bytesIn1 := testutils.XBytes(17)
 	bytesIn2 := testutils.XBytes(2048)
-	is_input := map[string]interface{}{
+	is_input := map[string]any{
 		"ZRAW":       bytesIn1,
 		"ZRAWSTRING": bytesIn2,
 	}
-	params := map[string]interface{}{
+	params := map[string]any{
 		"IS_INPUT": is_input,
 	}
 	c, err := ConnectionFromDest("MME")
@@ -621,8 +589,8 @@ func TestRAW_and_BYTE_acceptBuffer(t *testing.T) {
 
 	r, err := c.Call("/COE/RBP_FE_DATATYPES", params)
 	assert.Nil(t, err)
-	assert.Equal(t, bytesIn1, r["ES_OUTPUT"].(map[string]interface{})["ZRAW"])
-	assert.Equal(t, bytesIn2, r["ES_OUTPUT"].(map[string]interface{})["ZRAWSTRING"])
+	assert.Equal(t, bytesIn1, r["ES_OUTPUT"].(map[string]any)["ZRAW"])
+	assert.Equal(t, bytesIn2, r["ES_OUTPUT"].(map[string]any)["ZRAWSTRING"])
 	c.Close()
 }
 
@@ -631,7 +599,7 @@ func TestNonArrayForArrayParam(t *testing.T) {
 	c, err := ConnectionFromDest("MME")
 	assert.Nil(t, err)
 
-	params := map[string]interface{}{
+	params := map[string]any{
 		"QUERY_TABLE": "MARA",
 		"OPTIONS":     "A string instead of an array",
 	}

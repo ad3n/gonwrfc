@@ -1,3 +1,5 @@
+benchmarks/
+
 # Object files
 *.o
 *.ko

@@ -31,9 +31,6 @@ func verifyBenchmarkConnection(b *testing.B, conn *Connection, payload string) {
 	}
 }
 
-// BenchmarkProductionCall measures the complete production Call path: SDK
-// lookup, input conversion, network invocation, and output conversion. It is
-// opt-in because every iteration invokes the configured SAP system.
 func BenchmarkProductionCall(b *testing.B) {
 	destination := benchmarkDestination(b)
 	conn, err := ConnectionFromDest(destination)
@@ -42,9 +39,6 @@ func BenchmarkProductionCall(b *testing.B) {
 	}
 	b.Cleanup(func() { _ = conn.Close() })
 
-	// STFC_CONNECTION uses a fixed-width field, so keep payloads within the
-	// standard function's portable limit. Large STRING conversion is covered
-	// separately by BenchmarkFillString and BenchmarkWrapString.
 	for _, size := range []int{32, 255} {
 		payload := strings.Repeat("a", size)
 		b.Run(strconv.Itoa(size), func(b *testing.B) {
@@ -62,8 +56,6 @@ func BenchmarkProductionCall(b *testing.B) {
 	}
 }
 
-// BenchmarkProductionPool measures concurrent steady-state throughput. Pool
-// creation and connection establishment are deliberately outside the timer.
 func BenchmarkProductionPool(b *testing.B) {
 	destination := benchmarkDestination(b)
 	maxOpen := runtime.GOMAXPROCS(0)
@@ -76,8 +68,6 @@ func BenchmarkProductionPool(b *testing.B) {
 	}
 	b.Cleanup(func() { _ = pool.Close() })
 
-	// Establish all sessions before timing so this measures pool reuse and RFC
-	// throughput rather than one-time logon latency.
 	warmed := make([]*Connection, 0, maxOpen)
 	for range maxOpen {
 		conn, err := pool.Acquire(context.Background())

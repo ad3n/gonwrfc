@@ -59,11 +59,9 @@ func main() {
 	echoStruct := r["ECHOSTRUCT"].(map[string]interface{})
 	fmt.Println(echoStruct)
 
-	// empty time
 	fmt.Println(importStruct["RFCDATE"], reflect.TypeOf(importStruct["RFCDATE"]))
 	fmt.Println(echoStruct["RFCDATE"], reflect.TypeOf(echoStruct["RFCDATE"]))
 
-	// empty date
 	fmt.Println(importStruct["RFCTIME"], reflect.TypeOf(importStruct["RFCTIME"]))
 	fmt.Println(echoStruct["RFCTIME"], reflect.TypeOf(echoStruct["RFCTIME"]))
 

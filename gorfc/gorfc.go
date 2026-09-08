@@ -1,12 +1,8 @@
 //go:build (linux && cgo) || (amd64 && cgo) || (darwin && cgo)
-// +build linux,cgo amd64,cgo darwin,cgo
 
-// Package gorfc provides SAP NetWeawer RFC SDK client bindings for GO
 package gorfc
 
 /*
-
-// ~~~~ windows ~~~~ //
 
 #cgo windows CFLAGS: -D_CRT_NON_CONFORMING_SWPRINTFS -D_CRT_SECURE_NO_DEPRECATE -D_CRT_NONSTDC_NO_DEPRECATE -D_CONSOLE
 #cgo windows CFLAGS: -DSAPonNT -D_AFXDLL -DWIN32 -D_WIN32_WINNT=0x0502 -DWIN64 -D_AMD64_
@@ -18,19 +14,12 @@ package gorfc
 #cgo windows CFLAGS: -fno-strict-aliasing -fno-omit-frame-pointer -fexceptions -funsigned-char
 #cgo windows CFLAGS: -Wall -Wno-uninitialized -Wno-long-long
 #cgo windows CFLAGS: -Wcast-align -Wunused-variable
-// todo -EHs ?
-// todo -Gy ? -ffunction-sections -fdata-sections
-// todo MD ? -lpthread -lm
-// todo -nologo -W3 -Z7  -GL -O2 -Oy- /we4552 /we4700 /we4789
 
 #cgo windows CFLAGS: -IC:/Tools/nwrfcsdk/include/
 #cgo windows LDFLAGS: -LC:/Tools/nwrfcsdk/lib/ -lsapnwrfc -llibsapucum
 
 #cgo windows LDFLAGS: -O2 -g -pthread -pie -fPIE
 #cgo windows LDFLAGS: -OPT:REF -LTCG
-// todo -NXCOMPAT -STACK:0x2000000 -SWAPRUN:NET -DEBUG -DEBUGTYPE:CV,FIXUP -MACHINE:amd64 -nologo
-
-// ~~~~ linux ~~~~ //
 
 #cgo linux CFLAGS: -DNDEBUG -D_LARGEFILE_SOURCE -D_FILE_OFFSET_BITS=64
 #cgo linux CFLAGS: -DSAPwithUNICODE -D__NO_MATH_INLINES -DSAPwithTHREADS
@@ -44,8 +33,6 @@ package gorfc
 #cgo linux LDFLAGS: -L/usr/local/sap/nwrfcsdk/lib -lsapnwrfc -lsapucum
 
 #cgo linux LDFLAGS: -O2 -g -pthread
-
-// ~~~~ darwin ~~~~ //
 
 #cgo darwin CFLAGS: -Wall -O2 -Wno-uninitialized -Wcast-align
 #cgo darwin CFLAGS: -DSAP_UC_is_wchar -DSAPwithUNICODE -D__NO_MATH_INLINES -DSAPwithTHREADS -DSAPonDARW
@@ -61,6 +48,9 @@ package gorfc
 #cgo darwin LDFLAGS: -mmacosx-version-min=10.15
 
 #include <sapnwrfc.h>
+
+#cgo noescape RfcSAPUCToUTF8
+#cgo nocallback RfcSAPUCToUTF8
 
 static SAP_UC* GoMallocU(unsigned size) {
 	return (SAP_UC*)(mallocU(size));
@@ -137,8 +127,6 @@ func freeSAPUC(value *C.SAP_UC) {
 	C.free(unsafe.Pointer(value))
 }
 
-// fillStringWithLength avoids a second C boundary crossing to calculate the
-// converted SAP_UC length. String values use this hot path during every call.
 func fillStringWithLength(gostr string) (sapuc *C.SAP_UC, length C.uint, err error) {
 	if gostr == "" {
 		sapuc = C.GoMallocU(1)
@@ -151,9 +139,6 @@ func fillStringWithLength(gostr string) (sapuc *C.SAP_UC, length C.uint, err err
 	var errorInfo C.RFC_ERROR_INFO
 	var resultLen C.uint
 
-	// A UTF-16 representation never needs more code units than the source
-	// UTF-8 needs bytes (including surrogate pairs). Avoid doubling every
-	// input allocation on this per-parameter hot path.
 	sapucSize := C.uint(len(gostr) + 1)
 	sapuc = C.GoMallocU(sapucSize)
 	*sapuc = 0
@@ -501,8 +486,6 @@ func nWrapString(sapuc *C.SAP_UC, sapucLength C.uint, strip bool) (string, error
 		return "", nil
 	}
 
-	// One UTF-16 code unit expands to at most three UTF-8 bytes. A surrogate
-	// pair expands to four bytes, so three bytes per unit remains sufficient.
 	needed := uint(3*sapucLength + 1)
 
 	bufPtr := utf8BufPool.Get().(*[]byte)
