@@ -633,7 +633,7 @@ func wrapTypeDescription(typeDesc C.RFC_TYPE_DESC_HANDLE) (goTypeDesc TypeDescri
 	var nucLength, ucLength C.uint
 	var fieldCount C.uint
 
-	typeName := (*C.SAP_UC)(C.malloc((C.size_t)(40 + 1)))
+	typeName := (*C.SAP_UC)(C.malloc(C.sizeof_RFC_ABAP_NAME))
 	*typeName = 0
 	defer C.free(unsafe.Pointer(typeName))
 
