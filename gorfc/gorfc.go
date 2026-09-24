@@ -127,7 +127,56 @@ func freeSAPUC(value *C.SAP_UC) {
 	C.free(unsafe.Pointer(value))
 }
 
+type inputConversionState struct {
+	errorInfo C.RFC_ERROR_INFO
+	size      C.uint
+	length    C.uint
+}
+
+var inputConversionPool = sync.Pool{
+	New: func() any { return new(inputConversionState) },
+}
+
 func fillStringWithLength(gostr string) (sapuc *C.SAP_UC, length C.uint, err error) {
+	if len(gostr) > 32<<10 {
+		return fillStringUnpooled(gostr)
+	}
+
+	if gostr == "" {
+		sapuc = C.GoMallocU(1)
+		*sapuc = 0
+
+		return
+	}
+
+	// Go owns this pointer-free scratch object; the synchronous SDK call only
+	// borrows it. Copy results before returning it, and clear SDK error data.
+	state := inputConversionPool.Get().(*inputConversionState)
+	defer func() {
+		*state = inputConversionState{}
+		inputConversionPool.Put(state)
+	}()
+
+	state.size = C.uint(len(gostr) + 1)
+	sapuc = C.GoMallocU(state.size)
+	*sapuc = 0
+	var cStr *C.RFC_BYTE
+	if len(gostr) > 0 {
+		cStr = (*C.RFC_BYTE)(unsafe.Pointer(unsafe.StringData(gostr)))
+	}
+
+	rc := C.RfcUTF8ToSAPUC((*C.RFC_BYTE)(cStr), C.uint(len(gostr)), sapuc, &state.size, &state.length, &state.errorInfo)
+	if rc != C.RFC_OK {
+		err = rfcError(state.errorInfo, "Could not fill the string \"%v\"", gostr)
+		return
+	}
+
+	length = state.length
+
+	return
+}
+
+func fillStringUnpooled(gostr string) (sapuc *C.SAP_UC, length C.uint, err error) {
 	if gostr == "" {
 		sapuc = C.GoMallocU(1)
 		*sapuc = 0
@@ -152,6 +201,7 @@ func fillStringWithLength(gostr string) (sapuc *C.SAP_UC, length C.uint, err err
 		err = rfcError(errorInfo, "Could not fill the string \"%v\"", gostr)
 		return
 	}
+
 	length = resultLen
 
 	return

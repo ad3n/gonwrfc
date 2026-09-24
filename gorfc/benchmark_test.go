@@ -8,6 +8,22 @@ import (
 
 var benchmarkString string
 
+func BenchmarkFillStringParallel(b *testing.B) {
+	value := "STFC_CONNECTION"
+	b.ReportAllocs()
+	b.SetBytes(int64(len(value)))
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			converted, _, err := fillStringWithLength(value)
+			freeSAPUC(converted)
+			if err != nil {
+				b.Error(err)
+				return
+			}
+		}
+	})
+}
+
 func BenchmarkStringRoundTrip(b *testing.B) {
 	for _, value := range []string{"", "STFC_CONNECTION", strings.Repeat("😀é", 1024)} {
 		b.Run(strconv.Itoa(len(value)), func(b *testing.B) {
